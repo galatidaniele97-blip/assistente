@@ -1,0 +1,1874 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Daniele AI">
+<meta name="theme-color" content="#0d0d0f">
+<title>Daniele AI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0d0d0f;
+  --bg2: #111115;
+  --card: #16161c;
+  --card2: #1c1c24;
+  --border: #22222e;
+  --accent: #7c6aff;
+  --accent2: #9d8fff;
+  --green: #00c896;
+  --red: #ff4d6a;
+  --yellow: #f0a500;
+  --text: #f0f0f5;
+  --text2: #8888a0;
+  --text3: #44445a;
+  --safe-top: env(safe-area-inset-top, 44px);
+  --safe-bot: env(safe-area-inset-bottom, 34px);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  width: 100%; height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'DM Sans', sans-serif;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── SETUP SCREEN ── */
+#setup {
+  position: fixed; inset: 0;
+  background: var(--bg);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  padding: 40px 28px;
+  z-index: 100;
+}
+
+.setup-logo {
+  width: 72px; height: 72px;
+  background: linear-gradient(135deg, var(--accent), #4a3aff);
+  border-radius: 22px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 32px;
+  margin-bottom: 28px;
+  box-shadow: 0 0 40px rgba(124,106,255,0.3);
+}
+
+.setup-title {
+  font-family: 'Syne', sans-serif;
+  font-size: 28px; font-weight: 800;
+  color: var(--text);
+  margin-bottom: 8px;
+  text-align: center;
+}
+
+.setup-sub {
+  color: var(--text2);
+  font-size: 14px;
+  text-align: center;
+  margin-bottom: 40px;
+  line-height: 1.5;
+}
+
+.setup-field {
+  width: 100%;
+  margin-bottom: 14px;
+}
+
+.setup-field label {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 1.5px;
+  color: var(--text2);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+
+.setup-field input {
+  width: 100%;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  color: var(--text);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.setup-field input:focus { border-color: var(--accent); }
+.setup-field input::placeholder { color: var(--text3); }
+
+.btn-primary {
+  width: 100%;
+  background: linear-gradient(135deg, var(--accent), #4a3aff);
+  color: #fff;
+  border: none;
+  border-radius: 14px;
+  padding: 16px;
+  font-family: 'Syne', sans-serif;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-top: 8px;
+  letter-spacing: 0.5px;
+  transition: opacity 0.2s, transform 0.1s;
+  box-shadow: 0 8px 24px rgba(124,106,255,0.3);
+}
+
+.btn-primary:active { opacity: 0.8; transform: scale(0.98); }
+
+.setup-note {
+  font-size: 11px;
+  color: var(--text3);
+  text-align: center;
+  margin-top: 20px;
+  line-height: 1.6;
+}
+
+.setup-note a { color: var(--accent); text-decoration: none; }
+
+/* ── APP SHELL ── */
+#app {
+  display: none;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+}
+
+/* ── TOPBAR ── */
+.topbar {
+  padding: calc(var(--safe-top) + 8px) 20px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  position: relative;
+}
+
+.topbar-left { display: flex; align-items: center; gap: 10px; }
+
+.topbar-logo {
+  width: 32px; height: 32px;
+  background: linear-gradient(135deg, var(--accent), #4a3aff);
+  border-radius: 9px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px;
+}
+
+.topbar-name {
+  font-family: 'Syne', sans-serif;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.topbar-right { display: flex; gap: 10px; align-items: center; }
+
+.topbar-btn {
+  width: 34px; height: 34px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.topbar-btn:active { background: var(--card2); }
+
+.notif-dot {
+  position: absolute;
+  top: -3px; right: -3px;
+  width: 8px; height: 8px;
+  background: var(--red);
+  border-radius: 50%;
+  border: 2px solid var(--bg);
+}
+
+/* ── TAB BAR ── */
+.tabbar {
+  display: flex;
+  background: var(--bg2);
+  border-top: 1px solid var(--border);
+  padding: 8px 0 calc(var(--safe-bot) + 4px);
+  flex-shrink: 0;
+}
+
+.tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 0;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.tab-icon {
+  font-size: 20px;
+  line-height: 1;
+  transition: transform 0.2s;
+}
+
+.tab-label {
+  font-size: 10px;
+  color: var(--text3);
+  letter-spacing: 0.3px;
+  transition: color 0.2s;
+}
+
+.tab.active .tab-label { color: var(--accent); }
+.tab.active .tab-icon { transform: scale(1.1); }
+.tab:active { opacity: 0.7; }
+
+/* ── PAGES ── */
+.pages {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+.page {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s, transform 0.25s;
+  transform: translateX(30px);
+}
+
+.page.active {
+  opacity: 1;
+  pointer-events: all;
+  transform: translateX(0);
+}
+
+/* ── SECTION HEADER ── */
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.section-title {
+  font-family: 'Syne', sans-serif;
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.section-meta {
+  font-size: 12px;
+  color: var(--text2);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(124,106,255,0.15);
+  border: 1px solid rgba(124,106,255,0.3);
+  color: var(--accent2);
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 20px;
+}
+
+/* ── CARDS ── */
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 16px;
+  margin-bottom: 10px;
+}
+
+.card-sm {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+}
+
+/* ── TODAY PAGE ── */
+.today-hero {
+  background: linear-gradient(135deg, #1a1830 0%, #12121a 100%);
+  border: 1px solid rgba(124,106,255,0.2);
+  border-radius: 20px;
+  padding: 20px;
+  margin-bottom: 14px;
+  position: relative;
+  overflow: hidden;
+}
+
+.today-hero::before {
+  content: '';
+  position: absolute;
+  top: -30px; right: -30px;
+  width: 120px; height: 120px;
+  background: radial-gradient(circle, rgba(124,106,255,0.2) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.today-date {
+  font-size: 12px;
+  color: var(--text2);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.today-greeting {
+  font-family: 'Syne', sans-serif;
+  font-size: 22px;
+  font-weight: 800;
+  margin-bottom: 14px;
+}
+
+.today-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+
+.today-stat {
+  background: rgba(255,255,255,0.04);
+  border-radius: 10px;
+  padding: 10px;
+  text-align: center;
+}
+
+.today-stat-num {
+  font-family: 'Syne', sans-serif;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--accent2);
+}
+
+.today-stat-label {
+  font-size: 10px;
+  color: var(--text2);
+  margin-top: 2px;
+}
+
+/* ── AI GENERATE BUTTON ── */
+.ai-btn {
+  width: 100%;
+  background: linear-gradient(135deg, rgba(124,106,255,0.15), rgba(74,58,255,0.1));
+  border: 1px solid rgba(124,106,255,0.3);
+  border-radius: 14px;
+  padding: 14px 18px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  margin-bottom: 14px;
+  transition: border-color 0.2s;
+}
+
+.ai-btn:active { border-color: var(--accent); }
+
+.ai-btn-icon {
+  width: 36px; height: 36px;
+  background: linear-gradient(135deg, var(--accent), #4a3aff);
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.ai-btn-text { flex: 1; }
+.ai-btn-title { font-weight: 600; font-size: 14px; }
+.ai-btn-sub { font-size: 12px; color: var(--text2); margin-top: 2px; }
+.ai-btn-arrow { color: var(--text3); font-size: 18px; }
+
+/* ── SCHEDULE ITEMS ── */
+.schedule-item {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 8px;
+  position: relative;
+}
+
+.schedule-time-col {
+  width: 48px;
+  flex-shrink: 0;
+  text-align: right;
+}
+
+.schedule-time {
+  font-family: 'Syne', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text2);
+  padding-top: 14px;
+}
+
+.schedule-line-col {
+  width: 2px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.schedule-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  margin-top: 15px;
+  flex-shrink: 0;
+  margin-left: -4px;
+}
+
+.schedule-line {
+  width: 2px;
+  flex: 1;
+  background: var(--border);
+  margin-top: 4px;
+}
+
+.schedule-card {
+  flex: 1;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px 14px;
+  margin-bottom: 0;
+  transition: border-color 0.2s;
+}
+
+.schedule-card.pending { border-color: rgba(240,165,0,0.3); }
+.schedule-card.approved { border-color: rgba(0,200,150,0.2); }
+
+.schedule-card-title {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+.schedule-card-meta {
+  font-size: 12px;
+  color: var(--text2);
+}
+
+.schedule-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.btn-approve {
+  flex: 1;
+  background: rgba(0,200,150,0.12);
+  border: 1px solid rgba(0,200,150,0.3);
+  color: var(--green);
+  border-radius: 8px;
+  padding: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+  transition: background 0.15s;
+}
+
+.btn-approve:active { background: rgba(0,200,150,0.25); }
+
+.btn-reject {
+  flex: 1;
+  background: rgba(255,77,106,0.1);
+  border: 1px solid rgba(255,77,106,0.25);
+  color: var(--red);
+  border-radius: 8px;
+  padding: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+  transition: background 0.15s;
+}
+
+.btn-reject:active { background: rgba(255,77,106,0.2); }
+
+/* ── INBOX PAGE ── */
+.priority-label {
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text3);
+  margin: 16px 0 8px;
+  padding-left: 2px;
+}
+
+.email-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.email-card.urgent { border-left: 3px solid var(--red); }
+.email-card.important { border-left: 3px solid var(--yellow); }
+.email-card.normal { border-left: 3px solid var(--border); }
+
+.email-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.email-from { font-weight: 600; font-size: 13px; }
+.email-time { font-size: 11px; color: var(--text3); flex-shrink: 0; }
+.email-subject { font-size: 13px; color: var(--text2); margin-top: 3px; }
+.email-preview { font-size: 12px; color: var(--text3); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.email-expanded { display: none; margin-top: 12px; }
+.email-card.open .email-expanded { display: block; }
+
+.email-summary {
+  background: rgba(124,106,255,0.08);
+  border: 1px solid rgba(124,106,255,0.15);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text2);
+  line-height: 1.6;
+  margin-bottom: 10px;
+}
+
+.email-summary strong { color: var(--accent2); display: block; margin-bottom: 4px; font-size: 11px; letter-spacing: 0.5px; }
+
+.draft-label { font-size: 11px; color: var(--text3); letter-spacing: 0.5px; margin-bottom: 6px; }
+
+.draft-btn {
+  width: 100%;
+  background: var(--card2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  margin-bottom: 6px;
+  line-height: 1.5;
+  transition: border-color 0.15s;
+}
+
+.draft-btn:active { border-color: var(--accent); }
+
+/* ── CALENDAR PAGE ── */
+.week-strip {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 16px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.week-strip::-webkit-scrollbar { display: none; }
+
+.day-pill {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: all 0.15s;
+  min-width: 52px;
+}
+
+.day-pill.today {
+  background: linear-gradient(135deg, var(--accent), #4a3aff);
+  border-color: var(--accent);
+}
+
+.day-pill.has-event::after {
+  content: '';
+  width: 4px; height: 4px;
+  background: var(--green);
+  border-radius: 50%;
+}
+
+.day-name { font-size: 10px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; }
+.day-num { font-family: 'Syne', sans-serif; font-size: 18px; font-weight: 700; }
+.day-pill.today .day-name, .day-pill.today .day-num { color: #fff; }
+
+.event-item {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  margin-bottom: 8px;
+}
+
+.event-color-bar {
+  width: 3px;
+  border-radius: 2px;
+  align-self: stretch;
+  flex-shrink: 0;
+}
+
+.event-content { flex: 1; }
+.event-title { font-weight: 600; font-size: 14px; margin-bottom: 3px; }
+.event-time { font-size: 12px; color: var(--text2); }
+.event-loc { font-size: 11px; color: var(--text3); margin-top: 2px; }
+
+.event-pending-banner {
+  background: rgba(240,165,0,0.1);
+  border: 1px solid rgba(240,165,0,0.25);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.event-pending-banner .icon { font-size: 18px; }
+.event-pending-banner .text { font-size: 12px; color: var(--yellow); line-height: 1.5; }
+
+/* ── CHAT PAGE ── */
+.chat-messages {
+  padding-bottom: 80px;
+}
+
+.msg {
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+}
+
+.msg.user { align-items: flex-end; }
+.msg.ai { align-items: flex-start; }
+
+.msg-bubble {
+  max-width: 85%;
+  padding: 11px 14px;
+  border-radius: 18px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.msg.user .msg-bubble {
+  background: linear-gradient(135deg, var(--accent), #4a3aff);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+
+.msg.ai .msg-bubble {
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-bottom-left-radius: 4px;
+}
+
+.msg-time { font-size: 10px; color: var(--text3); margin-top: 4px; padding: 0 4px; }
+
+.chat-input-wrap {
+  position: fixed;
+  bottom: 0;
+  left: 0; right: 0;
+  padding: 10px 16px calc(var(--safe-bot) + 60px);
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.chat-input {
+  flex: 1;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 10px 16px;
+  color: var(--text);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px;
+  outline: none;
+  resize: none;
+  max-height: 100px;
+  transition: border-color 0.2s;
+  line-height: 1.4;
+}
+
+.chat-input:focus { border-color: var(--accent); }
+.chat-input::placeholder { color: var(--text3); }
+
+.chat-send {
+  width: 40px; height: 40px;
+  background: linear-gradient(135deg, var(--accent), #4a3aff);
+  border: none;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  font-size: 18px;
+  flex-shrink: 0;
+  transition: opacity 0.15s, transform 0.1s;
+}
+
+.chat-send:active { opacity: 0.8; transform: scale(0.92); }
+
+/* ── WEEKLY PAGE ── */
+.weekly-header {
+  background: linear-gradient(135deg, #141228 0%, #0f0f18 100%);
+  border: 1px solid rgba(124,106,255,0.15);
+  border-radius: 18px;
+  padding: 18px;
+  margin-bottom: 14px;
+}
+
+.weekly-title { font-family: 'Syne', sans-serif; font-size: 18px; font-weight: 800; margin-bottom: 4px; }
+.weekly-sub { font-size: 12px; color: var(--text2); }
+
+.kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+
+.kpi-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px;
+}
+
+.kpi-val {
+  font-family: 'Syne', sans-serif;
+  font-size: 26px;
+  font-weight: 800;
+  margin-bottom: 2px;
+}
+
+.kpi-val.green { color: var(--green); }
+.kpi-val.accent { color: var(--accent2); }
+.kpi-val.yellow { color: var(--yellow); }
+.kpi-val.red { color: var(--red); }
+
+.kpi-label { font-size: 11px; color: var(--text2); }
+
+.next-week-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  margin-bottom: 8px;
+}
+
+.next-week-day {
+  font-family: 'Syne', sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent2);
+  width: 28px;
+  flex-shrink: 0;
+}
+
+.next-week-text { flex: 1; font-size: 13px; }
+.next-week-time { font-size: 11px; color: var(--text3); }
+
+/* ── LOADING SPINNER ── */
+.spinner {
+  display: inline-block;
+  width: 16px; height: 16px;
+  border: 2px solid rgba(124,106,255,0.2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.loading-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text2);
+  font-size: 13px;
+  padding: 16px 0;
+  justify-content: center;
+}
+
+/* ── SKELETON ── */
+.skel {
+  background: linear-gradient(90deg, var(--card) 25%, var(--card2) 50%, var(--card) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: 8px;
+}
+
+@keyframes shimmer { to { background-position: -200% 0; } }
+
+/* ── TOAST ── */
+.toast {
+  position: fixed;
+  bottom: calc(var(--safe-bot) + 70px);
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: var(--card2);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 10px 18px;
+  font-size: 13px;
+  color: var(--text);
+  opacity: 0;
+  transition: opacity 0.25s, transform 0.25s;
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 999;
+}
+
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ── MODAL ── */
+.modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.7);
+  backdrop-filter: blur(4px);
+  z-index: 200;
+  display: flex;
+  align-items: flex-end;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s;
+}
+
+.modal-overlay.open { opacity: 1; pointer-events: all; }
+
+.modal-sheet {
+  width: 100%;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 24px 24px 0 0;
+  padding: 20px 20px calc(var(--safe-bot) + 20px);
+  transform: translateY(100%);
+  transition: transform 0.3s cubic-bezier(0.4,0,0.2,1);
+}
+
+.modal-overlay.open .modal-sheet { transform: translateY(0); }
+
+.modal-handle {
+  width: 36px; height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  margin: 0 auto 18px;
+}
+
+.modal-title {
+  font-family: 'Syne', sans-serif;
+  font-size: 18px;
+  font-weight: 800;
+  margin-bottom: 16px;
+}
+
+.modal-input {
+  width: 100%;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 13px 15px;
+  color: var(--text);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px;
+  outline: none;
+  margin-bottom: 10px;
+}
+
+.modal-input:focus { border-color: var(--accent); }
+
+.modal-row { display: flex; gap: 8px; }
+.modal-row .modal-input { flex: 1; }
+
+/* ── ANIMATIONS ── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.fade-up { animation: fadeUp 0.35s ease forwards; }
+
+.stagger > * {
+  opacity: 0;
+  animation: fadeUp 0.35s ease forwards;
+}
+
+.stagger > *:nth-child(1) { animation-delay: 0.05s; }
+.stagger > *:nth-child(2) { animation-delay: 0.1s; }
+.stagger > *:nth-child(3) { animation-delay: 0.15s; }
+.stagger > *:nth-child(4) { animation-delay: 0.2s; }
+.stagger > *:nth-child(5) { animation-delay: 0.25s; }
+.stagger > *:nth-child(6) { animation-delay: 0.3s; }
+</style>
+</head>
+<body>
+
+<!-- SETUP -->
+<div id="setup">
+  <div class="setup-logo">🤖</div>
+  <div class="setup-title">Il tuo Assistente AI</div>
+  <div class="setup-sub">Connetti Gmail e Calendar per iniziare.<br>I tuoi dati restano solo sul tuo iPhone.</div>
+
+  <div class="setup-field">
+    <label>Gemini API Key</label>
+    <input type="password" id="geminiKey" placeholder="AIza..." autocomplete="off" spellcheck="false">
+  </div>
+
+  <div class="setup-field">
+    <label>Google Client ID (OAuth)</label>
+    <input type="text" id="googleClientId" placeholder="123456789-abc.apps.googleusercontent.com" autocomplete="off" spellcheck="false">
+  </div>
+
+  <div class="setup-field">
+    <label>Il tuo nome</label>
+    <input type="text" id="userName" placeholder="Daniele" autocomplete="given-name">
+  </div>
+
+  <button class="btn-primary" onclick="saveSetup()">Inizia →</button>
+
+  <div class="setup-note">
+    🔒 Le chiavi sono salvate solo su questo dispositivo.<br>
+    <a href="https://aistudio.google.com/app/apikey" target="_blank">Ottieni Gemini API Key</a> · 
+    <a href="https://console.cloud.google.com" target="_blank">Google Cloud Console</a>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app">
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="topbar-logo">🤖</div>
+      <div class="topbar-name" id="topbarName">Assistente</div>
+    </div>
+    <div class="topbar-right">
+      <div class="topbar-btn" onclick="openAddEvent()" style="position:relative;">
+        ＋
+      </div>
+      <div class="topbar-btn" onclick="openSettings()">⚙️</div>
+    </div>
+  </div>
+
+  <div class="pages">
+    <!-- TODAY -->
+    <div class="page active" id="page-today">
+      <div class="today-hero">
+        <div class="today-date" id="todayDate">—</div>
+        <div class="today-greeting" id="todayGreeting">Buongiorno 👋</div>
+        <div class="today-stats">
+          <div class="today-stat">
+            <div class="today-stat-num" id="statEmail">—</div>
+            <div class="today-stat-label">Email</div>
+          </div>
+          <div class="today-stat">
+            <div class="today-stat-num" id="statEvents">—</div>
+            <div class="today-stat-label">Impegni</div>
+          </div>
+          <div class="today-stat">
+            <div class="today-stat-num" id="statFree">—</div>
+            <div class="today-stat-label">Ore libere</div>
+          </div>
+        </div>
+      </div>
+
+      <button class="ai-btn" onclick="generateSchedule()">
+        <div class="ai-btn-icon">✨</div>
+        <div class="ai-btn-text">
+          <div class="ai-btn-title">Genera schedule AI</div>
+          <div class="ai-btn-sub">Analizza email + calendario e pianifica il giorno</div>
+        </div>
+        <div class="ai-btn-arrow">›</div>
+      </button>
+
+      <div class="section-header">
+        <div class="section-title">Oggi</div>
+        <div class="section-meta" id="scheduleStatus">Non generata</div>
+      </div>
+
+      <div id="scheduleContainer" class="stagger">
+        <div style="text-align:center; padding: 40px 0; color: var(--text3); font-size:13px;">
+          Premi "Genera schedule AI" per iniziare
+        </div>
+      </div>
+    </div>
+
+    <!-- INBOX -->
+    <div class="page" id="page-inbox">
+      <div class="section-header">
+        <div class="section-title">Inbox</div>
+        <div class="badge" id="inboxBadge">— email</div>
+      </div>
+
+      <button class="ai-btn" onclick="loadInbox()">
+        <div class="ai-btn-icon">📬</div>
+        <div class="ai-btn-text">
+          <div class="ai-btn-title">Analizza email</div>
+          <div class="ai-btn-sub">Classifica, riassume e prepara bozze</div>
+        </div>
+        <div class="ai-btn-arrow">›</div>
+      </button>
+
+      <div id="inboxContainer">
+        <div style="text-align:center; padding: 40px 0; color: var(--text3); font-size:13px;">
+          Premi per analizzare le ultime email
+        </div>
+      </div>
+    </div>
+
+    <!-- CALENDAR -->
+    <div class="page" id="page-calendar">
+      <div class="section-header">
+        <div class="section-title">Calendario</div>
+        <div class="badge" id="calBadge">Oggi</div>
+      </div>
+
+      <div class="week-strip" id="weekStrip"></div>
+
+      <div id="pendingEvents"></div>
+
+      <div id="calendarContainer">
+        <div class="loading-row"><div class="spinner"></div> Caricamento eventi...</div>
+      </div>
+    </div>
+
+    <!-- CHAT -->
+    <div class="page" id="page-chat">
+      <div class="section-header">
+        <div class="section-title">Chat</div>
+        <div class="section-meta">Chiedimi qualsiasi cosa</div>
+      </div>
+      <div id="chatMessages" class="chat-messages stagger">
+        <div class="msg ai fade-up">
+          <div class="msg-bubble">
+            Ciao! Sono il tuo assistente personale. Posso aiutarti con la tua agenda, le email, spostare appuntamenti o rispondere a qualsiasi domanda sulla tua giornata. Come posso aiutarti? 🙂
+          </div>
+          <div class="msg-time">Adesso</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- WEEKLY -->
+    <div class="page" id="page-weekly">
+      <div class="section-header">
+        <div class="section-title">Settimana</div>
+        <div class="badge" id="weeklyBadge">—</div>
+      </div>
+
+      <div class="weekly-header">
+        <div class="weekly-title" id="weeklyTitle">Review settimanale</div>
+        <div class="weekly-sub" id="weeklySub">Genera il riepilogo per vedere come è andata</div>
+      </div>
+
+      <button class="ai-btn" onclick="generateWeekly()">
+        <div class="ai-btn-icon">📊</div>
+        <div class="ai-btn-text">
+          <div class="ai-btn-title">Genera review</div>
+          <div class="ai-btn-sub">Riepilogo settimana + piano per la prossima</div>
+        </div>
+        <div class="ai-btn-arrow">›</div>
+      </button>
+
+      <div id="weeklyContainer">
+        <div style="text-align:center; padding: 40px 0; color: var(--text3); font-size:13px;">
+          Genera la review per vedere statistiche e pianificare
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB BAR -->
+  <div class="tabbar">
+    <div class="tab active" onclick="switchTab('today', this)">
+      <div class="tab-icon">☀️</div>
+      <div class="tab-label">Oggi</div>
+    </div>
+    <div class="tab" onclick="switchTab('inbox', this)">
+      <div class="tab-icon">📬</div>
+      <div class="tab-label">Inbox</div>
+    </div>
+    <div class="tab" onclick="switchTab('calendar', this)">
+      <div class="tab-icon">📅</div>
+      <div class="tab-label">Calendario</div>
+    </div>
+    <div class="tab" onclick="switchTab('chat', this)">
+      <div class="tab-icon">💬</div>
+      <div class="tab-label">Chat</div>
+    </div>
+    <div class="tab" onclick="switchTab('weekly', this)">
+      <div class="tab-icon">📊</div>
+      <div class="tab-label">Settimana</div>
+    </div>
+  </div>
+</div>
+
+<!-- CHAT INPUT (fixed) -->
+<div class="chat-input-wrap" id="chatInputWrap" style="display:none;">
+  <textarea class="chat-input" id="chatInput" placeholder="Scrivi o chiedi qualcosa..." rows="1"
+    oninput="autoResize(this)" onkeydown="handleChatKey(event)"></textarea>
+  <button class="chat-send" onclick="sendChat()">➤</button>
+</div>
+
+<!-- ADD EVENT MODAL -->
+<div class="modal-overlay" id="addEventModal" onclick="closeModalOutside(event)">
+  <div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <div class="modal-title">Aggiungi impegno</div>
+    <input class="modal-input" id="evTitle" placeholder="Titolo evento" type="text">
+    <div class="modal-row">
+      <input class="modal-input" id="evDate" type="date">
+      <input class="modal-input" id="evTime" type="time">
+    </div>
+    <input class="modal-input" id="evLocation" placeholder="Luogo (opzionale)" type="text">
+    <button class="btn-primary" onclick="addEvent()">Aggiungi al calendario →</button>
+  </div>
+</div>
+
+<!-- SETTINGS MODAL -->
+<div class="modal-overlay" id="settingsModal" onclick="closeModalOutside(event)">
+  <div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <div class="modal-title">Impostazioni</div>
+    <div class="setup-field">
+      <label>Gemini API Key</label>
+      <input type="password" id="settingsKey" class="modal-input" placeholder="AIza...">
+    </div>
+    <div class="setup-field">
+      <label>Il tuo nome</label>
+      <input type="text" id="settingsName" class="modal-input" placeholder="Daniele">
+    </div>
+    <button class="btn-primary" onclick="saveSettings()">Salva</button>
+    <button style="width:100%;background:none;border:none;color:var(--red);padding:14px;font-size:13px;cursor:pointer;margin-top:4px;" onclick="resetApp()">Reimposta app e cancella dati</button>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ── STORAGE ──
+const S = {
+  get: k => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+  set: (k,v) => localStorage.setItem(k, JSON.stringify(v)),
+  del: k => localStorage.removeItem(k)
+};
+
+// ── STATE ──
+let state = {
+  geminiKey: '',
+  googleClientId: '',
+  userName: 'Daniele',
+  googleToken: null,
+  emails: [],
+  events: [],
+  schedule: [],
+  chatHistory: [],
+  pendingCalEvents: []
+};
+
+// ── INIT ──
+window.addEventListener('load', () => {
+  const saved = S.get('assistantConfig');
+  if (saved && saved.geminiKey && saved.userName) {
+    state = { ...state, ...saved };
+    startApp();
+  } else {
+    document.getElementById('setup').style.display = 'flex';
+  }
+  initToday();
+});
+
+function saveSetup() {
+  const key = document.getElementById('geminiKey').value.trim();
+  const clientId = document.getElementById('googleClientId').value.trim();
+  const name = document.getElementById('userName').value.trim() || 'Daniele';
+  if (!key) { showToast('⚠️ Inserisci la Gemini API Key'); return; }
+  state.geminiKey = key;
+  state.googleClientId = clientId;
+  state.userName = name;
+  S.set('assistantConfig', { geminiKey: key, googleClientId: clientId, userName: name });
+  startApp();
+}
+
+function startApp() {
+  document.getElementById('setup').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+  document.getElementById('topbarName').textContent = state.userName;
+  initToday();
+  if (state.googleClientId) initGoogleAuth();
+  else showToast('ℹ️ Aggiungi Google Client ID per Gmail e Calendar');
+}
+
+// ── TODAY INIT ──
+function initToday() {
+  const now = new Date();
+  const days = ['Domenica','Lunedì','Martedì','Mercoledì','Giovedì','Venerdì','Sabato'];
+  const months = ['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'];
+  document.getElementById('todayDate').textContent =
+    `${days[now.getDay()]}, ${now.getDate()} ${months[now.getMonth()]} ${now.getFullYear()}`;
+  const h = now.getHours();
+  const greeting = h < 12 ? 'Buongiorno' : h < 18 ? 'Buon pomeriggio' : 'Buonasera';
+  document.getElementById('todayGreeting').textContent = `${greeting}, ${state.userName} 👋`;
+  initWeekStrip();
+}
+
+// ── GOOGLE AUTH ──
+function initGoogleAuth() {
+  if (!state.googleClientId) return;
+  const script = document.createElement('script');
+  script.src = 'https://accounts.google.com/gsi/client';
+  script.onload = () => {
+    google.accounts.oauth2.initTokenClient({
+      client_id: state.googleClientId,
+      scope: 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar',
+      callback: (resp) => {
+        if (resp.access_token) {
+          state.googleToken = resp.access_token;
+          S.set('assistantConfig', { ...S.get('assistantConfig'), googleToken: resp.access_token });
+          showToast('✅ Google connesso!');
+          loadCalendarEvents();
+          updateTodayStats();
+        }
+      }
+    }).requestAccessToken();
+  };
+  document.head.appendChild(script);
+}
+
+// ── GMAIL ──
+async function fetchEmails() {
+  if (!state.googleToken) { showToast('⚠️ Connetti Google prima'); return []; }
+  try {
+    const res = await fetch(
+      'https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=15&q=in:inbox',
+      { headers: { Authorization: `Bearer ${state.googleToken}` } }
+    );
+    const data = await res.json();
+    if (!data.messages) return [];
+    const emails = [];
+    for (const m of data.messages.slice(0, 10)) {
+      const detail = await fetch(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`,
+        { headers: { Authorization: `Bearer ${state.googleToken}` } }
+      );
+      const d = await detail.json();
+      const headers = d.payload?.headers || [];
+      const get = name => headers.find(h => h.name === name)?.value || '';
+      emails.push({
+        id: m.id,
+        from: get('From').replace(/<.*>/, '').trim(),
+        subject: get('Subject') || '(nessun oggetto)',
+        date: get('Date'),
+        snippet: d.snippet || ''
+      });
+    }
+    state.emails = emails;
+    return emails;
+  } catch (e) {
+    showToast('❌ Errore Gmail: ' + e.message);
+    return [];
+  }
+}
+
+// ── CALENDAR ──
+async function loadCalendarEvents() {
+  if (!state.googleToken) return;
+  try {
+    const now = new Date();
+    const end = new Date(); end.setDate(end.getDate() + 7);
+    const res = await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${now.toISOString()}&timeMax=${end.toISOString()}&singleEvents=true&orderBy=startTime&maxResults=20`,
+      { headers: { Authorization: `Bearer ${state.googleToken}` } }
+    );
+    const data = await res.json();
+    state.events = data.items || [];
+    renderCalendar();
+    updateTodayStats();
+  } catch (e) {
+    console.error('Calendar error:', e);
+  }
+}
+
+async function createCalendarEvent(title, dateTime, location = '') {
+  if (!state.googleToken) { showToast('⚠️ Connetti Google prima'); return; }
+  const start = new Date(dateTime);
+  const end = new Date(start.getTime() + 60 * 60 * 1000);
+  const body = {
+    summary: title,
+    location,
+    start: { dateTime: start.toISOString(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+    end: { dateTime: end.toISOString(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }
+  };
+  try {
+    const res = await fetch(
+      'https://www.googleapis.com/calendar/v3/calendars/primary/events',
+      { method: 'POST', headers: { Authorization: `Bearer ${state.googleToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+    );
+    if (res.ok) {
+      showToast('✅ Evento aggiunto al calendario!');
+      await loadCalendarEvents();
+    }
+  } catch (e) {
+    showToast('❌ Errore calendario: ' + e.message);
+  }
+}
+
+// ── GEMINI API ──
+async function callGemini(prompt, systemCtx = '') {
+  const fullPrompt = systemCtx ? `${systemCtx}\n\n${prompt}` : prompt;
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${state.geminiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ parts: [{ text: fullPrompt }] }], generationConfig: { temperature: 0.7, maxOutputTokens: 2048 } })
+    }
+  );
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message);
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+}
+
+// ── GENERATE SCHEDULE ──
+async function generateSchedule() {
+  document.getElementById('scheduleStatus').textContent = 'Generazione...';
+  document.getElementById('scheduleContainer').innerHTML = `<div class="loading-row"><div class="spinner"></div> L'AI sta analizzando la tua giornata...</div>`;
+
+  const todayEvents = state.events.filter(e => {
+    const d = new Date(e.start?.dateTime || e.start?.date);
+    return d.toDateString() === new Date().toDateString();
+  });
+
+  const emailSnippets = state.emails.slice(0, 5).map(e => `- Da: ${e.from} | Oggetto: ${e.subject}`).join('\n');
+
+  const prompt = `
+Sei l'assistente personale di ${state.userName}. 
+Oggi è ${new Date().toLocaleDateString('it-IT', {weekday:'long', day:'numeric', month:'long'})}.
+
+EVENTI GIÀ IN CALENDARIO OGGI:
+${todayEvents.length ? todayEvents.map(e => `- ${e.summary} alle ${new Date(e.start?.dateTime || e.start?.date).toLocaleTimeString('it-IT', {hour:'2-digit',minute:'2-digit'})}`).join('\n') : 'Nessun evento'}
+
+EMAIL RECENTI DA GESTIRE:
+${emailSnippets || 'Nessuna email caricata'}
+
+Crea una schedule intelligente per la giornata di ${state.userName}. Includi blocchi per gestire le email urgenti, rispetta gli eventi esistenti, lascia pause pranzo e tempo personale.
+
+Rispondi SOLO con JSON valido, nessun testo fuori:
+{
+  "items": [
+    {
+      "time": "09:00",
+      "title": "Titolo del blocco",
+      "description": "Breve descrizione",
+      "type": "work|email|break|personal|meeting",
+      "duration": "30 min",
+      "priority": "alta|media|bassa"
+    }
+  ],
+  "summary": "Una frase riassuntiva sulla giornata"
+}`;
+
+  try {
+    const raw = await callGemini(prompt);
+    const clean = raw.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(clean);
+    state.schedule = parsed.items;
+    renderSchedule(parsed);
+    document.getElementById('scheduleStatus').textContent = parsed.summary || 'Generata';
+  } catch (e) {
+    document.getElementById('scheduleStatus').textContent = 'Errore';
+    document.getElementById('scheduleContainer').innerHTML = `<div class="card" style="border-color:var(--red);color:var(--red);font-size:13px;">❌ Errore: ${e.message}</div>`;
+  }
+}
+
+function renderSchedule(data) {
+  const colors = { work: '#7c6aff', email: '#4a9eff', break: '#00c896', personal: '#f0a500', meeting: '#ff4d6a' };
+  const container = document.getElementById('scheduleContainer');
+  container.className = 'stagger';
+  container.innerHTML = data.items.map((item, i) => `
+    <div class="schedule-item" id="sched-${i}">
+      <div class="schedule-time-col"><div class="schedule-time">${item.time}</div></div>
+      <div class="schedule-line-col">
+        <div class="schedule-dot" style="background:${colors[item.type]||'#7c6aff'}"></div>
+        <div class="schedule-line"></div>
+      </div>
+      <div class="schedule-card pending" id="scard-${i}">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+          <div class="schedule-card-title">${item.title}</div>
+          ${item.priority === 'alta' ? '<span style="font-size:10px;background:rgba(255,77,106,0.15);color:var(--red);padding:2px 7px;border-radius:10px;">Urgente</span>' : ''}
+        </div>
+        <div class="schedule-card-meta">${item.duration} · ${item.description}</div>
+        <div class="schedule-actions">
+          <div class="btn-approve" onclick="approveItem(${i})">✓ Ok</div>
+          <div class="btn-reject" onclick="rejectItem(${i})">✕ Rimuovi</div>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function approveItem(i) {
+  const card = document.getElementById(`scard-${i}`);
+  card.classList.remove('pending');
+  card.classList.add('approved');
+  card.querySelector('.schedule-actions').innerHTML = '<div style="font-size:12px;color:var(--green);padding:4px 0;">✓ Confermato</div>';
+  showToast('✅ Confermato');
+}
+
+function rejectItem(i) {
+  const item = document.getElementById(`sched-${i}`);
+  item.style.opacity = '0';
+  item.style.transform = 'translateX(-20px)';
+  item.style.transition = 'all 0.25s';
+  setTimeout(() => item.remove(), 250);
+  showToast('🗑️ Rimosso dalla schedule');
+}
+
+// ── INBOX ──
+async function loadInbox() {
+  document.getElementById('inboxContainer').innerHTML = `<div class="loading-row"><div class="spinner"></div> Caricamento email...</div>`;
+  const emails = await fetchEmails();
+  if (!emails.length) {
+    document.getElementById('inboxContainer').innerHTML = `<div style="text-align:center;padding:40px 0;color:var(--text3);font-size:13px;">Nessuna email trovata o Google non connesso</div>`;
+    return;
+  }
+  document.getElementById('inboxBadge').textContent = `${emails.length} email`;
+  document.getElementById('inboxContainer').innerHTML = `<div class="loading-row"><div class="spinner"></div> AI sta analizzando...</div>`;
+
+  const prompt = `
+Sei l'assistente email di ${state.userName}.
+Analizza queste email e classificale. Rispondi SOLO con JSON:
+
+EMAIL:
+${emails.map((e,i) => `${i+1}. Da: ${e.from} | Oggetto: ${e.subject} | Preview: ${e.snippet}`).join('\n')}
+
+{
+  "emails": [
+    {
+      "index": 0,
+      "priority": "urgente|importante|normale",
+      "riassunto": "2 righe max",
+      "bozze": ["Bozza risposta 1 breve", "Bozza risposta 2 più formale"],
+      "appuntamento": {"trovato": false, "data": null, "ora": null, "titolo": null}
+    }
+  ]
+}`;
+
+  try {
+    const raw = await callGemini(prompt);
+    const clean = raw.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(clean);
+    renderInbox(emails, parsed.emails || []);
+
+    // Auto-detect calendar events
+    const withAppt = (parsed.emails || []).filter(e => e.appuntamento?.trovato);
+    if (withAppt.length) {
+      state.pendingCalEvents = withAppt.map(e => ({ ...e.appuntamento, emailSubject: emails[e.index]?.subject }));
+      renderPendingEvents();
+    }
+  } catch (e) {
+    document.getElementById('inboxContainer').innerHTML = `<div class="card" style="border-color:var(--red);color:var(--red);font-size:13px;">❌ ${e.message}</div>`;
+  }
+}
+
+function renderInbox(emails, analysis) {
+  const priority = { urgente: [], importante: [], normale: [] };
+  analysis.forEach((a, i) => {
+    const email = emails[i];
+    if (!email) return;
+    const merged = { ...email, ...a };
+    (priority[a.priority] || priority.normale).push(merged);
+  });
+
+  let html = '';
+  const sections = [
+    { key: 'urgente', label: '🔴 Urgenti', cls: 'urgent' },
+    { key: 'importante', label: '🟡 Importanti', cls: 'important' },
+    { key: 'normale', label: '⚪ Normale', cls: 'normal' }
+  ];
+
+  sections.forEach(s => {
+    if (!priority[s.key].length) return;
+    html += `<div class="priority-label">${s.label}</div>`;
+    priority[s.key].forEach((e, i) => {
+      html += `
+        <div class="email-card ${s.cls}" onclick="toggleEmail(this)">
+          <div class="email-header">
+            <div>
+              <div class="email-from">${e.from}</div>
+              <div class="email-subject">${e.subject}</div>
+            </div>
+            <div class="email-time">${formatEmailDate(e.date)}</div>
+          </div>
+          <div class="email-preview">${e.snippet}</div>
+          <div class="email-expanded">
+            <div class="email-summary"><strong>📋 RIASSUNTO AI</strong>${e.riassunto || '—'}</div>
+            <div class="draft-label">💡 BOZZE RISPOSTA</div>
+            ${(e.bozze || []).map(b => `<div class="draft-btn" onclick="copyDraft(event,'${b.replace(/'/g,"\\'")}')">📋 ${b}</div>`).join('')}
+          </div>
+        </div>`;
+    });
+  });
+
+  document.getElementById('inboxContainer').innerHTML = html;
+}
+
+function toggleEmail(el) { el.classList.toggle('open'); }
+
+function copyDraft(e, text) {
+  e.stopPropagation();
+  navigator.clipboard?.writeText(text).then(() => showToast('📋 Bozza copiata!'));
+}
+
+function formatEmailDate(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString('it-IT', {hour:'2-digit',minute:'2-digit'});
+  return d.toLocaleDateString('it-IT', {day:'2-digit',month:'2-digit'});
+}
+
+// ── CALENDAR RENDER ──
+function initWeekStrip() {
+  const strip = document.getElementById('weekStrip');
+  strip.innerHTML = '';
+  const days = ['Dom','Lun','Mar','Mer','Gio','Ven','Sab'];
+  const now = new Date();
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(); d.setDate(d.getDate() + i);
+    const pill = document.createElement('div');
+    pill.className = 'day-pill' + (i === 0 ? ' today' : '');
+    pill.innerHTML = `<div class="day-name">${days[d.getDay()]}</div><div class="day-num">${d.getDate()}</div>`;
+    pill.onclick = () => {
+      document.querySelectorAll('.day-pill').forEach(p => p.classList.remove('today'));
+      pill.classList.add('today');
+      filterEventsByDate(d);
+    };
+    strip.appendChild(pill);
+  }
+}
+
+function renderCalendar(filterDate = null) {
+  const target = filterDate || new Date();
+  const events = state.events.filter(e => {
+    const d = new Date(e.start?.dateTime || e.start?.date);
+    return d.toDateString() === target.toDateString();
+  });
+
+  const colors = ['#7c6aff','#00c896','#4a9eff','#f0a500','#ff4d6a'];
+  const container = document.getElementById('calendarContainer');
+
+  if (!events.length) {
+    container.innerHTML = `<div style="text-align:center;padding:30px 0;color:var(--text3);font-size:13px;">Nessun evento per questo giorno</div>`;
+    return;
+  }
+
+  container.innerHTML = events.map((e, i) => {
+    const start = new Date(e.start?.dateTime || e.start?.date);
+    const end = new Date(e.end?.dateTime || e.end?.date);
+    return `
+      <div class="event-item">
+        <div class="event-color-bar" style="background:${colors[i % colors.length]}"></div>
+        <div class="event-content">
+          <div class="event-title">${e.summary || 'Evento'}</div>
+          <div class="event-time">${start.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'})} – ${end.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'})}</div>
+          ${e.location ? `<div class="event-loc">📍 ${e.location}</div>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function filterEventsByDate(date) { renderCalendar(date); }
+
+function renderPendingEvents() {
+  if (!state.pendingCalEvents.length) return;
+  const container = document.getElementById('pendingEvents');
+  container.innerHTML = state.pendingCalEvents.map((ev, i) => `
+    <div class="event-pending-banner">
+      <div class="icon">📅</div>
+      <div class="text">
+        <strong>${ev.titolo || ev.emailSubject}</strong><br>
+        ${ev.data || ''} ${ev.ora || ''} · Trovato nelle email
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px;margin-left:auto;">
+        <div class="btn-approve" style="font-size:11px;padding:5px 10px;" onclick="confirmPendingEvent(${i})">✓ Aggiungi</div>
+        <div class="btn-reject" style="font-size:11px;padding:5px 10px;" onclick="dismissPendingEvent(${i})">✕</div>
+      </div>
+    </div>`).join('');
+}
+
+async function confirmPendingEvent(i) {
+  const ev = state.pendingCalEvents[i];
+  if (ev.data) {
+    const dt = ev.ora ? `${ev.data}T${ev.ora}:00` : `${ev.data}T09:00:00`;
+    await createCalendarEvent(ev.titolo || ev.emailSubject, dt, ev.luogo || '');
+  }
+  state.pendingCalEvents.splice(i, 1);
+  renderPendingEvents();
+}
+
+function dismissPendingEvent(i) {
+  state.pendingCalEvents.splice(i, 1);
+  renderPendingEvents();
+}
+
+// ── CHAT ──
+async function sendChat() {
+  const input = document.getElementById('chatInput');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  autoResize(input);
+
+  appendMsg('user', text);
+
+  const context = `
+Sei l'assistente personale di ${state.userName}. 
+Data odierna: ${new Date().toLocaleDateString('it-IT')}.
+Impegni oggi: ${state.events.filter(e => new Date(e.start?.dateTime||e.start?.date).toDateString()===new Date().toDateString()).map(e=>e.summary).join(', ') || 'nessuno'}.
+Email in arrivo: ${state.emails.slice(0,3).map(e=>e.subject).join(', ') || 'nessuna'}.
+Rispondi in italiano, in modo diretto e conciso. Se l'utente vuole aggiungere un evento, estrai titolo, data e ora e rispondi con JSON: {"action":"create_event","title":"...","datetime":"YYYY-MM-DDTHH:MM:00","location":"..."}`;
+
+  const typingId = appendMsg('ai', '...', true);
+  try {
+    state.chatHistory.push({ role: 'user', parts: [{ text }] });
+    const response = await callGemini(state.chatHistory.map(m => `${m.role === 'user' ? 'Utente' : 'Assistente'}: ${m.parts[0].text}`).join('\n'), context);
+
+    document.getElementById(typingId)?.remove();
+
+    // Check for action
+    try {
+      const clean = response.replace(/```json|```/g,'').trim();
+      const action = JSON.parse(clean);
+      if (action.action === 'create_event') {
+        appendMsg('ai', `Ho trovato un evento da aggiungere: **${action.title}** — ${new Date(action.datetime).toLocaleString('it-IT')}. Vuoi che lo aggiunga al calendario?`);
+        // Add confirm buttons
+        const btnRow = document.createElement('div');
+        btnRow.style.cssText = 'display:flex;gap:8px;margin:8px 0 8px 0;';
+        btnRow.innerHTML = `
+          <div class="btn-approve" style="flex:0;padding:7px 16px;" onclick="createCalendarEvent('${action.title}','${action.datetime}','${action.location||''}');this.parentElement.remove();appendMsg('ai','✅ Evento aggiunto!')">✓ Aggiungi</div>
+          <div class="btn-reject" style="flex:0;padding:7px 16px;" onclick="this.parentElement.remove()">✕ No</div>`;
+        document.getElementById('chatMessages').appendChild(btnRow);
+        state.chatHistory.push({ role: 'model', parts: [{ text: response }] });
+        scrollChat();
+        return;
+      }
+    } catch {}
+
+    appendMsg('ai', response);
+    state.chatHistory.push({ role: 'model', parts: [{ text: response }] });
+  } catch (e) {
+    document.getElementById(typingId)?.remove();
+    appendMsg('ai', '❌ Errore: ' + e.message);
+  }
+  scrollChat();
+}
+
+function appendMsg(role, text, typing = false) {
+  const id = 'msg-' + Date.now() + Math.random();
+  const now = new Date().toLocaleTimeString('it-IT', {hour:'2-digit',minute:'2-digit'});
+  const div = document.createElement('div');
+  div.className = `msg ${role} fade-up`;
+  div.id = id;
+  div.innerHTML = `
+    <div class="msg-bubble">${typing ? '<div class="spinner"></div>' : text.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>')}</div>
+    <div class="msg-time">${now}</div>`;
+  document.getElementById('chatMessages').appendChild(div);
+  scrollChat();
+  return id;
+}
+
+function scrollChat() {
+  const msgs = document.getElementById('chatMessages');
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function handleChatKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); } }
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 100) + 'px';
+}
+
+// ── WEEKLY ──
+async function generateWeekly() {
+  document.getElementById('weeklyContainer').innerHTML = `<div class="loading-row"><div class="spinner"></div> Generazione review...</div>`;
+
+  const weekEvents = state.events.slice(0, 15).map(e =>
+    `- ${e.summary}: ${new Date(e.start?.dateTime||e.start?.date).toLocaleDateString('it-IT')}`
+  ).join('\n');
+
+  const prompt = `
+Sei l'assistente di ${state.userName}. Crea una review settimanale professionale.
+Settimana corrente: ${new Date().toLocaleDateString('it-IT')}.
+Eventi della settimana: ${weekEvents || 'nessuno registrato'}.
+
+Rispondi SOLO con JSON:
+{
+  "kpis": [
+    {"label": "Impegni completati", "value": "12", "type": "green"},
+    {"label": "Email gestite", "value": "34", "type": "accent"},
+    {"label": "Riunioni", "value": "5", "type": "yellow"},
+    {"label": "Ore libere", "value": "8", "type": "accent"}
+  ],
+  "highlights": ["Punto positivo 1", "Punto positivo 2"],
+  "nextWeek": [
+    {"day": "Lun", "text": "Attività o impegno previsto", "time": "09:00"},
+    {"day": "Mar", "text": "Attività", "time": "14:00"},
+    {"day": "Mer", "text": "Attività", "time": "10:00"},
+    {"day": "Gio", "text": "Attività", "time": "11:00"},
+    {"day": "Ven", "text": "Review settimanale", "time": "17:00"}
+  ]
+}`;
+
+  try {
+    const raw = await callGemini(prompt);
+    const clean = raw.replace(/```json|```/g,'').trim();
+    const data = JSON.parse(clean);
+    renderWeekly(data);
+  } catch (e) {
+    document.getElementById('weeklyContainer').innerHTML = `<div class="card" style="border-color:var(--red);color:var(--red);font-size:13px;">❌ ${e.message}</div>`;
+  }
+}
+
+function renderWeekly(data) {
+  let html = '';
+  html += `<div class="kpi-grid">`;
+  (data.kpis || []).forEach(k => {
+    html += `<div class="kpi-card"><div class="kpi-val ${k.type}">${k.value}</div><div class="kpi-label">${k.label}</div></div>`;
+  });
+  html += `</div>`;
+
+  if (data.highlights?.length) {
+    html += `<div class="section-header" style="margin-top:8px;"><div class="section-title" style="font-size:16px;">✨ Highlights</div></div>`;
+    data.highlights.forEach(h => {
+      html += `<div class="card-sm" style="color:var(--text2);font-size:13px;">· ${h}</div>`;
+    });
+  }
+
+  if (data.nextWeek?.length) {
+    html += `<div class="section-header" style="margin-top:16px;"><div class="section-title" style="font-size:16px;">📅 Prossima settimana</div></div>`;
+    data.nextWeek.forEach(item => {
+      html += `
+        <div class="next-week-item">
+          <div class="next-week-day">${item.day}</div>
+          <div class="next-week-text">${item.text}</div>
+          <div class="next-week-time">${item.time}</div>
+        </div>`;
+    });
+  }
+
+  document.getElementById('weeklyContainer').innerHTML = html;
+  document.getElementById('weeklyBadge').textContent = new Date().toLocaleDateString('it-IT',{day:'2-digit',month:'short'});
+}
+
+// ── STATS ──
+function updateTodayStats() {
+  const todayEvents = state.events.filter(e => {
+    const d = new Date(e.start?.dateTime || e.start?.date);
+    return d.toDateString() === new Date().toDateString();
+  });
+  document.getElementById('statEmail').textContent = state.emails.length || '—';
+  document.getElementById('statEvents').textContent = todayEvents.length || '—';
+  // rough free hours
+  const busy = todayEvents.reduce((acc, e) => {
+    if (e.start?.dateTime && e.end?.dateTime) {
+      return acc + (new Date(e.end.dateTime) - new Date(e.start.dateTime)) / 3600000;
+    }
+    return acc;
+  }, 0);
+  document.getElementById('statFree').textContent = Math.max(0, Math.round(8 - busy)) + 'h';
+}
+
+// ── NAVIGATION ──
+function switchTab(name, el) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  el.classList.add('active');
+
+  const chatWrap = document.getElementById('chatInputWrap');
+  chatWrap.style.display = name === 'chat' ? 'flex' : 'none';
+
+  if (name === 'calendar') { initWeekStrip(); renderCalendar(); }
+}
+
+// ── MODALS ──
+function openAddEvent() {
+  const modal = document.getElementById('addEventModal');
+  modal.classList.add('open');
+  const now = new Date();
+  document.getElementById('evDate').value = now.toISOString().split('T')[0];
+  document.getElementById('evTime').value = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+}
+
+async function addEvent() {
+  const title = document.getElementById('evTitle').value.trim();
+  const date = document.getElementById('evDate').value;
+  const time = document.getElementById('evTime').value;
+  const loc = document.getElementById('evLocation').value.trim();
+  if (!title || !date) { showToast('⚠️ Inserisci titolo e data'); return; }
+  closeModal('addEventModal');
+  await createCalendarEvent(title, `${date}T${time || '09:00'}:00`, loc);
+}
+
+function openSettings() {
+  document.getElementById('settingsKey').value = state.geminiKey;
+  document.getElementById('settingsName').value = state.userName;
+  document.getElementById('settingsModal').classList.add('open');
+}
+
+function saveSettings() {
+  state.geminiKey = document.getElementById('settingsKey').value.trim();
+  state.userName = document.getElementById('settingsName').value.trim() || state.userName;
+  S.set('assistantConfig', { ...S.get('assistantConfig'), geminiKey: state.geminiKey, userName: state.userName });
+  closeModal('settingsModal');
+  document.getElementById('topbarName').textContent = state.userName;
+  showToast('✅ Impostazioni salvate');
+}
+
+function resetApp() {
+  if (confirm('Sei sicuro? Verranno cancellati tutti i dati salvati.')) {
+    localStorage.clear();
+    location.reload();
+  }
+}
+
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+function closeModalOutside(e) {
+  if (e.target === e.currentTarget) e.currentTarget.classList.remove('open');
+}
+
+// ── TOAST ──
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+</script>
+</body>
+</html>
