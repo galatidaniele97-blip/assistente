@@ -1,0 +1,14 @@
+{
+  "name": "mensa",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Gestione degli ordini pasto di una mensa aziendale",
+  "scripts": {
+    "start": "node dev-server.js",
+    "test": "node --test --no-warnings test/api.test.js",
+    "deploy": "wrangler deploy",
+    "db:init": "wrangler d1 execute mensa --remote --file=schema.sql"
+  },
+  "engines": { "node": ">=22.5" }
+}

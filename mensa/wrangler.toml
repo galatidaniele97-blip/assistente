@@ -1,0 +1,21 @@
+name = "mensa"
+main = "src/worker.js"
+compatibility_date = "2025-09-01"
+
+# Il piano gratuito di Cloudflare copre ampiamente una ventina di aziende
+# e qualche centinaio di persone: costo di esercizio praticamente nullo.
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "mensa"
+database_id = "da-sostituire-dopo-wrangler-d1-create-mensa"
+
+[vars]
+RETENTION_WEEKS = "12"
+
+# Pulizia automatica dei dati storici: ogni notte alle 3:00 UTC.
+[triggers]
+crons = ["0 3 * * *"]
