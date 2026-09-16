@@ -1,0 +1,198 @@
+// Sessioni firmate (HMAC-SHA256) e gestione dei codici di accesso.
+// Nessuno stato lato server: il token porta ruolo e perimetro dati.
+
+import { HttpError } from './util.js';
+
+// Il telefono del dipendente può essere condiviso in reparto: una settimana, non un mese.
+const TTL_SECONDS = { admin: 12 * 3600, manager: 12 * 3600, staff: 7 * 24 * 3600 };
+// Alfabeto senza caratteri ambigui (0/O, 1/I/L): i codici vengono letti a voce e trascritti.
+const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+
+const enc = new TextEncoder();
+
+function b64urlEncode(bytes) {
+  let s = '';
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function b64urlDecode(text) {
+  const s = text.replace(/-/g, '+').replace(/_/g, '/');
+  const bin = atob(s + '='.repeat((4 - (s.length % 4)) % 4));
+  return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+}
+
+async function key(secret) {
+  return crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, [
+    'sign',
+    'verify',
+  ]);
+}
+
+export async function issueToken(secret, payload) {
+  const ttl = TTL_SECONDS[payload.r] ?? 3600;
+  const body = { ...payload, exp: Math.floor(Date.now() / 1000) + ttl };
+  const data = b64urlEncode(enc.encode(JSON.stringify(body)));
+  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', await key(secret), enc.encode(data)));
+  return `${data}.${b64urlEncode(sig)}`;
+}
+
+export async function readToken(secret, token) {
+  if (typeof token !== 'string' || !token.includes('.')) return null;
+  const [data, sig] = token.split('.');
+  let ok = false;
+  try {
+    ok = await crypto.subtle.verify('HMAC', await key(secret), b64urlDecode(sig), enc.encode(data));
+  } catch {
+    return null;
+  }
+  if (!ok) return null;
+  let payload;
+  try {
+    payload = JSON.parse(new TextDecoder().decode(b64urlDecode(data)));
+  } catch {
+    return null;
+  }
+  if (!payload || typeof payload.exp !== 'number' || payload.exp * 1000 < Date.now()) return null;
+  return payload;
+}
+
+/**
+ * Estrae la sessione dall'header Authorization, ne verifica ruolo e "versione".
+ * La versione cambia quando si rigenerano i codici: da quel momento i token
+ * emessi prima non valgono più, anche se non sono ancora scaduti.
+ */
+export async function requireSession(request, env, roles, db) {
+  const header = request.headers.get('authorization') || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+  const session = await readToken(env.SESSION_SECRET, token);
+  if (!session) throw new HttpError(401, 'Sessione scaduta. Inserisci di nuovo il codice.');
+  if (!roles.includes(session.r)) throw new HttpError(403, 'Operazione non consentita per questo accesso.');
+  if (db) {
+    const row =
+      session.r === 'admin'
+        ? await db.first('SELECT token_version AS v FROM restaurant WHERE id = 1')
+        : await db.first('SELECT token_version AS v FROM companies WHERE id = ?', [session.c]);
+    if (!row || row.v !== session.v) throw new HttpError(401, 'Accesso revocato. Inserisci il nuovo codice.');
+  }
+  return session;
+}
+
+// ── Hash del codice del ristorante ───────────────────────────────────────────
+// È la chiave di tutte le aziende: nel database ne sta solo l'impronta (PBKDF2).
+const PBKDF2_ITERATIONS = 100000;
+
+function hex(bytes) {
+  return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function unhex(text) {
+  return Uint8Array.from(text.match(/.{2}/g) ?? [], (h) => parseInt(h, 16));
+}
+
+async function pbkdf2(code, salt, iterations) {
+  const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(code), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations }, keyMaterial, 256);
+  return new Uint8Array(bits);
+}
+
+export async function hashCode(code) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const derived = await pbkdf2(code, salt, PBKDF2_ITERATIONS);
+  return `pbkdf2$${PBKDF2_ITERATIONS}$${hex(salt)}$${hex(derived)}`;
+}
+
+export async function verifyCode(code, stored) {
+  const [scheme, iterations, salt, expected] = String(stored ?? '').split('$');
+  if (scheme !== 'pbkdf2') return false;
+  const derived = await pbkdf2(code, unhex(salt), Number(iterations));
+  const want = unhex(expected);
+  if (want.length !== derived.length) return false;
+  let diff = 0;
+  for (let i = 0; i < want.length; i++) diff |= want[i] ^ derived[i];
+  return diff === 0;
+}
+
+/** I codici si leggono a voce e si scrivono male: normalizziamo prima di confrontare. */
+export function normalizeCode(value) {
+  return String(value ?? '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+}
+
+export function generateCode(length = 6) {
+  const bytes = crypto.getRandomValues(new Uint8Array(length));
+  return Array.from(bytes, (b) => ALPHABET[b % ALPHABET.length]).join('');
+}
+
+// ── Limitazione dei tentativi di accesso ──────────────────────────────────────
+// Un'intera azienda esce spesso da un solo indirizzo IP: contare soltanto per IP
+// significherebbe che una persona che sbaglia il codice blocca tutti i colleghi.
+// Si contano quindi i tentativi sullo stesso codice (poche prove ammesse) e in
+// parallelo quelli complessivi dall'IP, con un tetto molto più alto che ferma
+// solo un attacco a forza bruta.
+const WINDOW_SECONDS = 900;
+const MAX_PER_CODE = 10;
+const MAX_PER_IP = 200;
+
+export function clientIp(request) {
+  return (
+    request.headers.get('cf-connecting-ip') ||
+    (request.headers.get('x-forwarded-for') || '').split(',')[0].trim() ||
+    'sconosciuto'
+  );
+}
+
+/** Impronta del codice: nella tabella dei tentativi non finisce il codice in chiaro. */
+async function codeFingerprint(code) {
+  const digest = await crypto.subtle.digest('SHA-256', enc.encode(code));
+  return [...new Uint8Array(digest).slice(0, 8)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function attemptKeys(ip, code) {
+  return [`${ip}|${await codeFingerprint(code)}`, ip];
+}
+
+async function countOf(db, key, window) {
+  const row = await db.first('SELECT count FROM login_attempts WHERE key = ? AND window_ts = ?', [key, window]);
+  return row?.count ?? 0;
+}
+
+export async function checkLoginRate(db, ip, code) {
+  const window = Math.floor(Date.now() / 1000 / WINDOW_SECONDS);
+  const [perCode, perIp] = await attemptKeys(ip, code);
+  if ((await countOf(db, perCode, window)) >= MAX_PER_CODE || (await countOf(db, perIp, window)) >= MAX_PER_IP) {
+    throw new HttpError(429, 'Troppi tentativi con questo codice. Riprova tra qualche minuto.');
+  }
+}
+
+/** Il PIN ha 4-6 cifre: senza un tetto per persona si indovinerebbe in pochi minuti. */
+const MAX_PIN_ATTEMPTS = 8;
+
+export async function checkPinRate(db, employeeId) {
+  const window = Math.floor(Date.now() / 1000 / WINDOW_SECONDS);
+  if ((await countOf(db, `pin|${employeeId}`, window)) >= MAX_PIN_ATTEMPTS) {
+    throw new HttpError(429, 'Troppi tentativi con il PIN. Riprova tra qualche minuto, o chiedi al referente di azzerarlo.');
+  }
+}
+
+export async function recordFailedPin(db, employeeId) {
+  const window = Math.floor(Date.now() / 1000 / WINDOW_SECONDS);
+  await db.run(
+    `INSERT INTO login_attempts (key, window_ts, count) VALUES (?, ?, 1)
+     ON CONFLICT(key, window_ts) DO UPDATE SET count = count + 1`,
+    [`pin|${employeeId}`, window]
+  );
+}
+
+export async function recordFailedLogin(db, ip, code) {
+  const window = Math.floor(Date.now() / 1000 / WINDOW_SECONDS);
+  const keys = await attemptKeys(ip, code);
+  await db.batch(
+    keys.map((key) => ({
+      sql: `INSERT INTO login_attempts (key, window_ts, count) VALUES (?, ?, 1)
+            ON CONFLICT(key, window_ts) DO UPDATE SET count = count + 1`,
+      params: [key, window],
+    }))
+  );
+}

@@ -1,0 +1,52 @@
+/* Solo per la dimostrazione: il pannello con i codici e il contrassegno. */
+.demo-badge {
+  position: fixed;
+  left: 50%;
+  bottom: calc(6px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 55;
+  border: 1px solid var(--brand-strong);
+  background: var(--brand);
+  color: var(--ink);
+  font-family: var(--font-titoli);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  padding: 3px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  opacity: 0.92;
+}
+.demo-fondo {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(21, 19, 15, 0.55);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 16px;
+}
+.demo-pannello {
+  width: min(520px, 100%);
+  max-height: 88vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border-radius: 18px;
+  padding: 20px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+}
+.demo-intro { color: var(--muted); font-size: 0.92rem; margin: 6px 0 14px; }
+.demo-elenco { display: grid; gap: 8px; margin-bottom: 14px; }
+.demo-riga {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.demo-ruolo { font-weight: 650; font-size: 0.95rem; }
+.demo-nota { color: var(--muted); font-size: 0.8rem; }
+.demo-copia { cursor: pointer; border-style: solid; border-color: var(--line-strong); }
+@media (min-width: 640px) { .demo-fondo { align-items: center; } }
