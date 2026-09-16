@@ -535,8 +535,9 @@ async function managerPeople() {
   const list = h('div', { class: 'list' }, data.employees.map((employee) =>
     h('div', { class: employee.active ? 'list-item' : 'list-item inactive' },
       h('span', { class: 'locker-badge', text: employee.locker }),
-      h('span', { class: 'grow truncate', text: employee.name }),
-      h('button', { class: 'btn btn-small', text: 'Modifica', onclick: () => employeeDialog(employee, managerPeople) }),
+      // min-width evita che il nome venga schiacciato dai pulsanti: piuttosto vanno a capo loro.
+      h('span', { class: 'grow', style: 'min-width:9rem', text: employee.name }),
+      h('button', { class: 'btn btn-small', style: 'margin-left:auto', text: 'Modifica', onclick: () => employeeDialog(employee, managerPeople) }),
       h('button', {
         class: 'btn btn-small btn-danger',
         text: 'Elimina',

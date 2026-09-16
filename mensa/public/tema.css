@@ -1,0 +1,45 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   TEMA — unico file da toccare per vestire l'app con l'identità del ristorante.
+   Cambiando i valori qui sotto cambiano barra superiore, pulsanti, scelte
+   selezionate, titoli e testo di tutte le schermate. Nessun altro file.
+
+   Da allineare a mano quando cambi --brand (non leggono il CSS):
+     - public/index.html  →  <meta name="theme-color" content="...">
+     - public/manifest.webmanifest → "theme_color"
+     - public/icona.svg   →  <rect ... fill="...">
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Identità del ristorante ──────────────────────────────────────────── */
+
+  /* Colore principale: intestazione, pulsante di invio, bordo della scelta attiva. */
+  --brand: #0f6f5c;
+  /* Variante scura dello stesso colore: testo del brand su fondo chiaro, link. */
+  --brand-dark: #0b5546;
+  /* Variante tenue (stesso colore molto schiarito): fondo della scelta attiva. */
+  --brand-soft: #e3f2ee;
+
+  /* Font. Se il marchio usa font web, aggiungi il <link> in index.html e
+     privacy.html: la Content-Security-Policy consente già Google Fonts. */
+  --font-testo: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-titoli: var(--font-testo);
+  /* Spaziatura delle lettere dei titoli: utile per i caratteri condensati. */
+  --titoli-spacing: 0;
+  /* Maiuscoletto sui titoli delle sezioni: "none" oppure "uppercase". */
+  --titoli-transform: none;
+
+  /* ── Neutri e misure (di norma non si toccano) ────────────────────────── */
+  --bg: #f2f4f6;
+  --surface: #ffffff;
+  --surface-2: #f7f9fa;
+  --text: #14181d;
+  --muted: #5c6773;
+  --line: #d9dee4;
+  --danger: #b3261e;
+  --danger-soft: #fdecea;
+  --warn: #8a5a00;
+  --warn-soft: #fff4d6;
+  --radius: 14px;
+  --tap: 56px;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.1);
+}

@@ -85,6 +85,27 @@ test girano in memoria senza mock.
 Il client non usa `innerHTML` in nessun punto: tutto il DOM è costruito con nodi di testo, e la
 Content-Security-Policy vieta script e stili esterni.
 
+## Tema (colori e font del ristorante)
+
+Tutta l'identità visiva sta in `public/tema.css`: tre colori del marchio e due font.
+Cambiarli lì cambia intestazione, pulsanti, scelte selezionate, titoli e testo di ogni schermata.
+
+```css
+--brand: #0f6f5c;        /* intestazione, pulsante di invio, bordo della scelta attiva */
+--brand-dark: #0b5546;   /* stesso colore piu scuro: testo e link */
+--brand-soft: #e3f2ee;   /* stesso colore molto schiarito: fondo della scelta attiva */
+--font-testo: ...;
+--font-titoli: ...;
+```
+
+Tre valori vanno allineati a mano perche non leggono il CSS: `theme-color` in `public/index.html`,
+`theme_color` in `public/manifest.webmanifest` e il `fill` in `public/icona.svg`.
+
+Per un font web basta aggiungere il `<link>` a Google Fonts in `index.html` e `privacy.html`: la
+Content-Security-Policy del Worker consente gia `fonts.googleapis.com` e `fonts.gstatic.com`.
+
+I colori attuali sono un segnaposto neutro, non l'identita di un ristorante specifico.
+
 ## Privacy
 
 Le scelte alimentari possono rivelare dati sensibili (allergie, convinzioni religiose). Per questo:
