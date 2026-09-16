@@ -1,6 +1,7 @@
 // Interfaccia Mensa. Nessuna dipendenza esterna, nessun innerHTML: tutto costruito nel DOM.
 
 import { currentWeek, shiftWeek, weekLabel, dayLabel, GIORNI_BREVI } from './shared/week.js';
+import { simulaAggiunta } from './shared/regole.js';
 
 const DAYS = [1, 2, 3, 4, 5];
 const TOKEN_KEY = 'mensa.token';
@@ -131,6 +132,7 @@ function logout(message) {
 const ROLE_LABEL = { admin: 'Ristorante', manager: 'Referente aziendale', staff: 'Il mio ordine' };
 
 function renderTopbar() {
+  document.body.classList.toggle('admin', store.role === 'admin');
   const bar = document.getElementById('topbar');
   if (!store.role) {
     bar.className = '';
@@ -331,21 +333,23 @@ async function viewStaffOrder() {
   store.employee = data.employee;
   renderTopbar();
 
+  const byId = new Map(data.menu.map((item) => [item.id, item]));
+  const infoDi = (id) => byId.get(id);
   const selection = {};
   for (const day of DAYS) {
     const saved = data.order?.days?.[day];
-    selection[day] = { skip: !!saved?.skip, items: new Set(saved?.items ?? []) };
+    selection[day] = { skip: !!saved?.skip, items: (saved?.items ?? []).filter((id) => byId.has(id)) };
   }
   let baseline = serializeSelection(selection);
-  const dishesOf = (day, courseId) => data.menu.filter((item) => item.day === day && item.courseId === courseId);
   const dayNodes = new Map();
+  const piattiDi = (day, courseId) => data.menu.filter((i) => i.day === day && i.courseId === courseId);
 
   const refreshBar = () => {
     const dirty = serializeSelection(selection) !== baseline;
-    const chosen = DAYS.filter((day) => selection[day].items.size > 0).length;
-    const skipped = DAYS.filter((day) => selection[day].skip).length;
+    const scelti = DAYS.filter((day) => selection[day].items.length > 0).length;
+    const saltati = DAYS.filter((day) => selection[day].skip).length;
     const state = dirty
-      ? `${chosen} ${chosen === 1 ? 'giorno scelto' : 'giorni scelti'}${skipped ? `, ${skipped} senza pranzo` : ''}`
+      ? `${scelti} ${scelti === 1 ? 'giorno scelto' : 'giorni scelti'}${saltati ? `, ${saltati} senza pranzo` : ''}`
       : data.order
         ? `Inviato ${formatStamp(data.order.updatedAt)}`
         : 'Nessun ordine inviato per questa settimana';
@@ -358,7 +362,7 @@ async function viewStaffOrder() {
         onclick: () => guard(async () => {
           const body = {
             week: store.week,
-            days: DAYS.map((day) => ({ day, skip: selection[day].skip, items: [...selection[day].items] })),
+            days: DAYS.map((day) => ({ day, skip: selection[day].skip, items: selection[day].items })),
           };
           const result = await api('/api/staff/order', { method: 'POST', body });
           data.order = { updatedAt: result.updatedAt, days: {} };
@@ -367,21 +371,6 @@ async function viewStaffOrder() {
           refreshBar();
         }),
       }));
-  };
-
-  const toggleDish = (day, course, item) => {
-    const chosen = selection[day];
-    if (chosen.items.has(item.id)) {
-      chosen.items.delete(item.id);
-    } else {
-      const current = dishesOf(day, course.id).filter((d) => chosen.items.has(d.id));
-      if (current.length >= course.max) {
-        if (course.max !== 1) return; // il pulsante è già disattivato: il limite non si supera
-        chosen.items.delete(current[0].id);
-      }
-      chosen.items.add(item.id);
-    }
-    redrawDay(day);
   };
 
   const redrawDay = (day) => {
@@ -394,17 +383,24 @@ async function viewStaffOrder() {
   const dayCard = (day) => {
     const chosen = selection[day];
     const dayMenu = data.menu.filter((item) => item.day === day);
+    const unico = chosen.items.map(infoDi).find((item) => item?.single);
     const card = h('section', { class: chosen.skip ? 'card day skipped' : 'card day' },
       h('div', { class: 'day-head' },
         h('h2', { text: dayLabel(store.week, day) }),
+        !chosen.skip && dayMenu.length
+          ? h('span', {
+              class: unico || chosen.items.length >= data.rules.maxDishes ? 'counter full' : 'counter',
+              text: unico ? 'piatto unico' : `${chosen.items.length}/${data.rules.maxDishes} piatti`,
+            })
+          : null,
         dayMenu.length
           ? h('button', {
               class: 'skip-btn',
               'aria-pressed': chosen.skip ? 'true' : 'false',
-              text: chosen.skip ? 'Non pranzo' : 'Non pranzo',
+              text: 'Non pranzo',
               onclick: () => {
                 chosen.skip = !chosen.skip;
-                if (chosen.skip) chosen.items.clear();
+                if (chosen.skip) chosen.items = [];
                 redrawDay(day);
               },
             })
@@ -421,26 +417,34 @@ async function viewStaffOrder() {
 
     const courses = h('div', { class: 'courses' });
     for (const course of data.courses) {
-      const dishes = dishesOf(day, course.id);
-      if (!dishes.length) continue;
-      const used = dishes.filter((d) => chosen.items.has(d.id)).length;
-      const full = used >= course.max;
+      const piatti = piattiDi(day, course.id);
+      if (!piatti.length) continue;
+      const usati = piatti.filter((p) => chosen.items.includes(p.id)).length;
       courses.append(h('div', { class: 'course' },
         h('div', { class: 'course-head' },
           h('h3', { text: course.name }),
-          h('span', { class: full ? 'counter full' : 'counter', text: `${used}/${course.max}` })),
-        h('div', { class: 'options' }, dishes.map((item) => {
-          const selected = chosen.items.has(item.id);
-          const locked = !selected && full && course.max !== 1;
+          course.max > 1 ? h('span', { class: usati >= course.max ? 'counter full' : 'counter', text: `${usati}/${course.max}` }) : null),
+        h('div', { class: 'options' }, piatti.map((item) => {
+          const selezionato = chosen.items.includes(item.id);
+          const esito = selezionato ? chosen.items : simulaAggiunta(chosen.items, item, data.rules, infoDi);
           return h('button', {
             class: 'opt',
             type: 'button',
-            'aria-pressed': selected ? 'true' : 'false',
-            disabled: locked || course.max === 0,
-            onclick: () => toggleDish(day, course, item),
+            'aria-pressed': selezionato ? 'true' : 'false',
+            disabled: !selezionato && esito === null,
+            onclick: () => {
+              const prossime = simulaAggiunta(chosen.items, item, data.rules, infoDi);
+              if (prossime === null) return;
+              chosen.items = prossime;
+              chosen.skip = false;
+              redrawDay(day);
+            },
           },
-            h('span', { class: 'mark', text: '✓' }),
-            h('span', { class: 'grow', text: item.name }));
+            h('span', { class: 'mark', text: '\u2713' }),
+            h('span', { class: 'slot-code', text: item.code }),
+            h('span', { class: 'grow' },
+              h('span', { text: item.name }),
+              item.single ? h('span', { class: 'unico-badge', text: 'piatto unico' }) : null));
         }))));
     }
     card.append(courses);
@@ -462,12 +466,12 @@ async function viewStaffOrder() {
     data.menu.length ? null : h('div', { class: 'notice', style: 'margin-top:12px', text: 'Il menù di questa settimana non è ancora stato pubblicato.' }),
     days,
     h('div', { class: 'card', style: 'margin-top:16px' },
-      h('p', { class: 'small muted', text: 'Puoi correggere quando vuoi: vale sempre l’ultimo invio.' }),
+      h('p', { class: 'small muted', text: 'Puoi correggere quando vuoi: vale sempre l\u2019ultimo invio.' }),
       h('button', {
         class: 'btn btn-small btn-danger',
         text: 'Cancella i miei ordini',
         onclick: () => guard(async () => {
-          if (!(await confirmBox('Vengono cancellati tutti i tuoi ordini, di tutte le settimane. L’operazione non è reversibile.', 'Cancella'))) return;
+          if (!(await confirmBox('Vengono cancellati tutti i tuoi ordini, di tutte le settimane. L\u2019operazione non è reversibile.', 'Cancella'))) return;
           await api('/api/staff/orders', { method: 'DELETE' });
           toast('Ordini cancellati');
           await viewStaffOrder();
@@ -623,23 +627,42 @@ function adminHeader() {
   return tabsBar(ADMIN_TABS, store.tab, (key) => viewAdmin(key));
 }
 
+/**
+ * Le regole dell'azienda: quanti piatti al giorno, quali portate, con quali
+ * lettere del foglio settimanale e quali valgono da sole un pasto.
+ */
 function coursesDialog(company, onSaved) {
+  const piattiAlGiorno = h('input', {
+    class: 'field', type: 'number', min: '1', max: '9', style: 'width:92px', value: String(company.maxDishes ?? 3),
+  });
   const rows = h('div', { class: 'stack' });
+
   const addRow = (course) => {
-    const nome = h('input', { class: 'field grow', value: course?.name ?? '', placeholder: 'es. Primo', autocomplete: 'off' });
-    const max = h('input', { class: 'field', style: 'width:92px', type: 'number', min: '0', max: '9', value: String(course?.max ?? 1) });
-    const row = h('div', { class: 'row' }, nome, max,
-      h('button', { class: 'btn btn-small btn-danger', text: '✕', 'aria-label': 'Rimuovi portata', onclick: () => row.remove() }));
-    row.dataset.courseId = course?.id ?? '';
-    row._inputs = { nome, max };
+    const nome = h('input', { class: 'field grow', value: course?.name ?? '', placeholder: 'es. Primi', autocomplete: 'off' });
+    const lettere = h('input', {
+      class: 'field', style: 'width:110px', autocomplete: 'off', placeholder: 'A, B',
+      value: (course?.slots ?? []).map((s) => s.code).join(', '),
+    });
+    const max = h('input', { class: 'field', style: 'width:78px', type: 'number', min: '0', max: '9', value: String(course?.max ?? 1) });
+    const unico = h('input', { type: 'checkbox', style: 'width:22px;height:22px' });
+    unico.checked = !!course?.single;
+    const row = h('div', { class: 'card', style: 'padding:12px' },
+      h('div', { class: 'row' }, nome,
+        h('button', { class: 'btn btn-small btn-danger', text: '\u2715', 'aria-label': 'Rimuovi portata', onclick: () => row.remove() })),
+      h('div', { class: 'row-wrap', style: 'margin-top:8px' },
+        h('span', { class: 'small muted', text: 'Lettere' }), lettere,
+        h('span', { class: 'small muted', text: 'Max/giorno' }), max),
+      h('label', { class: 'row', style: 'margin-top:8px;font-weight:400' }, unico,
+        h('span', { class: 'small', text: 'Pasto unico: vale da solo un pasto completo' })));
+    row._dati = { course, nome, lettere, max, unico };
     rows.append(row);
   };
-  (company.courses.length ? company.courses : [{ name: 'Primo', max: 1 }]).forEach(addRow);
+  (company.courses.length ? company.courses : [{ name: 'Primi', max: 1, slots: [{ code: 'A' }] }]).forEach(addRow);
 
-  const box = dialog(`Portate di ${company.name}`,
+  const box = dialog(`Regole di ${company.name}`,
     [
-      h('p', { class: 'small muted', text: 'Per ogni portata indica quante scelte può fare una persona in un giorno. Il limite viene applicato durante l’ordine.' }),
-      h('div', { class: 'row small muted' }, h('span', { class: 'grow', text: 'Portata' }), h('span', { style: 'width:92px', text: 'Max/giorno' }), h('span', { style: 'width:52px' })),
+      h('div', { class: 'row' }, h('span', { text: 'Piatti al giorno' }), piattiAlGiorno),
+      h('p', { class: 'small muted', text: 'Le lettere sono quelle del foglio settimanale: chi ordina sceglie una casella, il ristorante decide che cosa ci mette. Il limite viene applicato durante l\u2019ordine, non segnalato dopo.' }),
       rows,
       h('button', { class: 'btn btn-small', text: '+ Aggiungi portata', onclick: () => addRow(null) }),
     ],
@@ -649,12 +672,22 @@ function coursesDialog(company, onSaved) {
         class: 'btn btn-small btn-primary',
         text: 'Salva',
         onclick: () => guard(async () => {
-          const courses = [...rows.children].map((row) => ({
-            id: row.dataset.courseId ? Number(row.dataset.courseId) : undefined,
-            name: row._inputs.nome.value,
-            max: Number(row._inputs.max.value),
-          }));
-          await api(`/api/admin/companies/${company.id}/courses`, { method: 'PUT', body: { courses } });
+          const courses = [...rows.children].map((row) => {
+            const { course, nome, lettere, max, unico } = row._dati;
+            const codici = lettere.value.split(/[\s,;]+/).map((c) => c.trim().toUpperCase()).filter(Boolean);
+            return {
+              id: course?.id,
+              name: nome.value,
+              max: Number(max.value),
+              single: unico.checked,
+              // Le lettere già esistenti conservano il proprio id: gli ordini restano validi.
+              slots: codici.map((code) => ({ id: (course?.slots ?? []).find((s) => s.code === code)?.id, code })),
+            };
+          });
+          await api(`/api/admin/companies/${company.id}/courses`, {
+            method: 'PUT',
+            body: { maxDishes: Number(piattiAlGiorno.value), courses },
+          });
           box.close();
           toast('Regole aggiornate');
           await onSaved();
@@ -675,7 +708,7 @@ async function adminCompanies() {
         h('span', { class: 'small muted', text: 'Codice referente' }), h('span', { class: 'code-chip', text: company.codeManager })),
       h('p', { class: 'small muted', text: company.courses.map((c) => `${c.name} (max ${c.max})`).join(' · ') || 'Nessuna portata configurata' }),
       h('div', { class: 'row-wrap' },
-        h('button', { class: 'btn btn-small', text: 'Portate', onclick: () => coursesDialog(company, adminCompanies) }),
+        h('button', { class: 'btn btn-small', text: 'Regole', onclick: () => coursesDialog(company, adminCompanies) }),
         h('button', { class: 'btn btn-small', text: 'Rinomina', onclick: () => renameDialog(company) }),
         h('button', {
           class: 'btn btn-small',
@@ -741,10 +774,11 @@ function renameDialog(company) {
   ]);
 }
 
+/** Il menù della settimana è la stessa griglia del foglio: una riga per lettera, una colonna per giorno. */
 async function adminMenu() {
   const companies = (await api('/api/admin/companies')).companies;
   if (!companies.length) {
-    paint(adminHeader(), h('div', { class: 'card' }, h('p', { class: 'muted', text: 'Crea prima un’azienda cliente.' })));
+    paint(adminHeader(), h('div', { class: 'card' }, h('p', { class: 'muted', text: 'Crea prima un\u2019azienda cliente.' })));
     return;
   }
   if (!companies.some((c) => c.id === store.companyId)) store.companyId = companies[0].id;
@@ -753,35 +787,56 @@ async function adminMenu() {
   const select = h('select', { class: 'field', onchange: (event) => { store.companyId = Number(event.target.value); viewAdmin('menu'); } },
     companies.map((company) => h('option', { value: company.id, selected: company.id === store.companyId }, company.name)));
 
-  const areas = new Map();
-  const dayCards = DAYS.map((day) => {
-    const card = h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', { text: dayLabel(store.week, day) })));
-    for (const course of data.courses) {
-      const value = data.items.filter((item) => item.day === day && item.courseId === course.id).map((item) => item.name).join('\n');
-      const area = h('textarea', { class: 'field', rows: '3', spellcheck: 'false', placeholder: 'Un piatto per riga' }, value);
-      area.value = value;
-      areas.set(`${day}:${course.id}`, area);
-      card.append(h('div', { style: 'margin-top:10px' },
-        h('label', { text: `${course.name} · max ${course.max} al giorno` }), area));
-    }
-    if (!data.courses.length) card.append(h('p', { class: 'muted small', text: 'Configura prima le portate nella scheda Aziende.' }));
-    return card;
-  });
+  const righe = data.courses.flatMap((course) =>
+    course.slots.map((slot) => ({ ...slot, courseName: course.name, courseSingle: course.single })));
+  const celle = new Map();
+
+  const corpo = h('tbody', {}, righe.map((slot) =>
+    h('tr', {},
+      h('th', { scope: 'row' },
+        h('span', { class: 'slot-code', text: slot.code }),
+        h('span', { class: 'small muted', text: slot.courseName })),
+      DAYS.map((day) => {
+        const item = data.items.find((i) => i.slotId === slot.id && i.day === day);
+        const campo = h('input', { class: 'field', autocomplete: 'off', spellcheck: 'false', placeholder: '\u2014' });
+        campo.value = item?.name ?? '';
+        const unico = h('button', {
+          type: 'button',
+          class: 'unico-toggle',
+          title: 'Piatto unico: da solo vale un pasto completo',
+          'aria-pressed': item?.single ? 'true' : 'false',
+          text: 'unico',
+          onclick: (event) => {
+            const btn = event.currentTarget;
+            btn.setAttribute('aria-pressed', btn.getAttribute('aria-pressed') === 'true' ? 'false' : 'true');
+          },
+        });
+        // Il contrassegno serve di rado (la pizza): compare solo dove c'è un piatto.
+        const aggiornaUnico = () => {
+          unico.hidden = !campo.value.trim() && unico.getAttribute('aria-pressed') !== 'true';
+        };
+        campo.addEventListener('input', aggiornaUnico);
+        aggiornaUnico();
+        celle.set(`${slot.id}:${day}`, { campo, unico });
+        return h('td', {}, campo, slot.courseSingle ? null : unico);
+      }))));
 
   const collect = () => {
     const items = [];
-    for (const day of DAYS) {
-      for (const course of data.courses) {
-        const lines = (areas.get(`${day}:${course.id}`)?.value ?? '').split('\n').map((line) => line.trim()).filter(Boolean);
-        for (const name of lines) items.push({ day, courseId: course.id, name });
+    for (const slot of righe) {
+      for (const day of DAYS) {
+        const cella = celle.get(`${slot.id}:${day}`);
+        const nome = cella.campo.value.trim();
+        if (!nome) continue;
+        items.push({ day, slotId: slot.id, name: nome, single: cella.unico.getAttribute('aria-pressed') === 'true' });
       }
     }
     return items;
   };
 
-  const save = () => guard(async () => {
+  const salva = (messaggio = 'Menù salvato') => guard(async () => {
     await api('/api/admin/menu', { method: 'PUT', body: { companyId: store.companyId, week: store.week, items: collect() } });
-    toast('Menù salvato');
+    toast(messaggio);
     await adminMenu();
   });
 
@@ -790,21 +845,28 @@ async function adminMenu() {
       h('label', { text: 'Azienda' }), select,
       weekBar((delta) => { store.week = shiftWeek(store.week, delta); viewAdmin('menu'); }),
       data.orders
-        ? h('div', { class: 'notice', style: 'margin-top:12px', text: `${data.orders} ordini già inviati per questa settimana. I piatti che togli spariscono dagli ordini di chi li aveva scelti.` })
+        ? h('div', { class: 'notice', style: 'margin-top:12px', text: `${data.orders} ordini già inviati. Correggere una casella non cancella gli ordini; svuotarla toglie la scelta a chi l\u2019aveva presa.` })
         : null),
-    dayCards,
+    righe.length
+      ? h('div', { class: 'card' },
+          h('p', { class: 'small muted', text: 'Una riga per lettera, una colonna per giorno. Casella vuota: quel giorno la lettera non c\u2019è.' }),
+          h('div', { class: 'grid-scroll' },
+            h('table', { class: 'menu-grid' },
+              h('thead', {}, h('tr', {}, h('th', { text: '' }), DAYS.map((day) => h('th', { text: dayLabel(store.week, day) })))),
+              corpo)))
+      : h('div', { class: 'card' }, h('p', { class: 'muted', text: 'Configura prima le portate e le lettere nella scheda Aziende.' })),
     h('div', { class: 'card' },
       h('div', { class: 'stack' },
-        h('button', { class: 'btn btn-primary btn-block', text: 'Salva menù', onclick: save }),
+        h('button', { class: 'btn btn-primary btn-block', text: 'Salva menù', onclick: () => salva() }),
         h('button', {
           class: 'btn btn-block',
           text: 'Copia questo menù a tutte le aziende',
           onclick: () => guard(async () => {
-            if (!(await confirmBox('Il menù di questa settimana viene copiato su tutte le altre aziende, sostituendo quello esistente. I piatti di portate che un’azienda non ha vengono ignorati.', 'Copia a tutte'))) return;
+            if (!(await confirmBox('Il menù di questa settimana viene copiato su tutte le altre aziende, sostituendo quello esistente. Le lettere che un\u2019azienda non ha vengono ignorate.', 'Copia a tutte'))) return;
             await api('/api/admin/menu', { method: 'PUT', body: { companyId: store.companyId, week: store.week, items: collect() } });
             const result = await api('/api/admin/menu/copy', { method: 'POST', body: { fromCompanyId: store.companyId, week: store.week, toCompanyIds: 'all' } });
-            const ignorati = result.report.reduce((sum, row) => sum + row.skipped, 0);
-            toast(`Copiato su ${result.report.length} aziende${ignorati ? `, ${ignorati} piatti ignorati` : ''}`);
+            const mancanti = [...new Set(result.report.flatMap((r) => r.missing))].sort();
+            toast(`Copiato su ${result.report.length} aziende${mancanti.length ? `, lettere ignorate: ${mancanti.join(' ')}` : ''}`);
             await adminMenu();
           }),
         }),
@@ -834,7 +896,10 @@ async function adminKitchen() {
     for (const course of day.courses) {
       section.append(h('div', { class: 'course-label', text: course.name }));
       for (const dish of course.dishes) {
-        section.append(h('div', { class: 'dish-row' }, h('span', { class: 'qty', text: dish.qty }), h('span', { class: 'name', text: dish.name })));
+        section.append(h('div', { class: 'dish-row' },
+          h('span', { class: 'qty', text: dish.qty }),
+          dish.codes ? h('span', { class: 'slot-code', text: dish.codes }) : null,
+          h('span', { class: 'name', text: dish.name })));
       }
     }
     return section;
@@ -866,7 +931,11 @@ function deliveryNodes(report, showCompany = true) {
           h('span', { class: 'locker-badge', text: person.locker }),
           h('div', { class: 'grow' },
             h('div', {}, h('strong', { text: person.name })),
-            h('div', { class: 'choices', text: person.choices.map((c) => c.dish).join(' · ') }))));
+            h('div', { class: 'choices' }, person.choices.map((c, index) => [
+              index ? h('span', { text: ' \u00b7 ' }) : null,
+              h('span', { class: 'slot-code', text: c.code }),
+              h('span', { text: c.dish }),
+            ])))));
       }
     }
     return section;

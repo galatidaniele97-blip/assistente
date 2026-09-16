@@ -30,7 +30,10 @@ h3 { font-size: 1rem; }
 p { margin: 0 0 0.8em; }
 a { color: var(--brand-dark); }
 
-.app { max-width: 720px; margin: 0 auto; padding: 0 16px 120px; }
+/* La console del ristorante si usa al computer e la griglia del menù ha bisogno di larghezza. */
+:root { --app-max: 720px; }
+@media (min-width: 900px) { body.admin { --app-max: 1180px; } }
+.app { max-width: var(--app-max); margin: 0 auto; padding: 0 16px 120px; }
 .hidden { display: none !important; }
 .muted { color: var(--muted); }
 .small { font-size: 0.86rem; }
@@ -50,7 +53,7 @@ a { color: var(--brand-dark); }
   color: var(--surface);
   padding: calc(env(safe-area-inset-top) + 10px) 16px 10px;
 }
-.topbar-inner { max-width: 720px; margin: 0 auto; display: flex; align-items: center; gap: 12px; }
+.topbar-inner { max-width: var(--app-max); margin: 0 auto; display: flex; align-items: center; gap: 12px; }
 .topbar .who { font-weight: 650; font-size: 1.05rem; }
 .topbar .sub { font-size: 0.82rem; opacity: 0.85; }
 .topbar button {
@@ -202,8 +205,8 @@ textarea.field { min-height: 96px; resize: vertical; line-height: 1.5; }
 
 /* ── Giorno e scelte ──────────────────────────────────────────── */
 .day { margin-top: 14px; }
-.day-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-.day-head h2 { flex: 1; }
+.day-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 10px; }
+.day-head h2 { flex: 1 1 auto; white-space: nowrap; }
 .day.skipped .courses { display: none; }
 .skip-btn {
   min-height: 44px;
@@ -268,7 +271,7 @@ textarea.field { min-height: 96px; resize: vertical; line-height: 1.5; }
   border-top: 1px solid var(--line);
   padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
 }
-.submitbar-inner { max-width: 720px; margin: 0 auto; display: flex; align-items: center; gap: 12px; }
+.submitbar-inner { max-width: var(--app-max); margin: 0 auto; display: flex; align-items: center; gap: 12px; }
 .submitbar .state { flex: 1; font-size: 0.85rem; color: var(--muted); }
 .submitbar .btn { flex: 0 0 auto; min-width: 180px; }
 
@@ -355,3 +358,70 @@ footer.legal { max-width: 720px; margin: 28px auto 0; padding: 0 16px; font-size
   .card { border: 0; box-shadow: none; padding: 0; }
   .report-day { break-inside: avoid; }
 }
+
+/* ── Lettere del menù (A, B, E, F, G, H, L, P, T) ─────────────────────────── */
+.slot-code {
+  flex: 0 0 auto;
+  display: inline-block;
+  min-width: 26px;
+  padding: 1px 6px;
+  border-radius: 7px;
+  background: var(--ink);
+  color: var(--surface);
+  font-family: var(--font-titoli);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-align: center;
+}
+.opt[aria-pressed="true"] .slot-code { background: var(--brand-dark); }
+.choices .slot-code { margin-right: 5px; font-size: 0.75rem; min-width: 22px; }
+.dish-row .slot-code { margin-right: 2px; }
+
+.unico-badge {
+  display: block;
+  margin-top: 2px;
+  font-family: var(--font-titoli);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--brand-dark);
+}
+
+/* ── Griglia del menù settimanale (ristorante) ───────────────────────────── */
+.grid-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 0 -4px; padding: 0 4px; }
+.menu-grid { border-collapse: separate; border-spacing: 6px; }
+.menu-grid th {
+  font-family: var(--font-titoli);
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-align: left;
+  white-space: nowrap;
+  color: var(--muted);
+}
+.menu-grid tbody th { display: flex; align-items: center; gap: 7px; min-width: 120px; }
+.menu-grid td { min-width: 190px; vertical-align: top; }
+.menu-grid td .field { min-height: 46px; padding: 8px 10px; font-size: 0.95rem; }
+
+/* Il contrassegno "unico" serve di rado: compare quando si lavora sulla casella. */
+.unico-toggle[hidden] { display: none; }
+.menu-grid .unico-toggle { opacity: 0; transition: opacity 0.12s; }
+.menu-grid td:hover .unico-toggle,
+.menu-grid td:focus-within .unico-toggle,
+.menu-grid .unico-toggle[aria-pressed="true"] { opacity: 1; }
+.unico-toggle {
+  margin-top: 4px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-family: var(--font-titoli);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.unico-toggle[aria-pressed="true"] { background: var(--brand); border-color: var(--brand-strong); color: var(--ink); }

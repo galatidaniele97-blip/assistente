@@ -13,6 +13,7 @@ import {
   recordFailedLogin,
 } from './auth.js';
 import { isValidWeek, currentWeek, shiftWeek, GIORNI, dayLabel, weekLabel } from '../public/shared/week.js';
+import { verificaGiorno } from '../public/shared/regole.js';
 
 const DAYS = [1, 2, 3, 4, 5];
 
@@ -29,7 +30,43 @@ async function companyOf(db, session) {
 }
 
 async function coursesOf(db, companyId) {
-  return db.all('SELECT id, name, max_per_day AS max FROM courses WHERE company_id = ? ORDER BY pos, id', [companyId]);
+  const courses = await db.all(
+    'SELECT id, name, max_per_day AS max, single_dish AS single, pos FROM courses WHERE company_id = ? ORDER BY pos, id',
+    [companyId]
+  );
+  const slots = await db.all(
+    'SELECT id, course_id AS courseId, code, pos FROM slots WHERE company_id = ? ORDER BY pos, id',
+    [companyId]
+  );
+  for (const course of courses) {
+    course.single = !!course.single;
+    course.slots = slots.filter((s) => s.courseId === course.id);
+  }
+  return courses;
+}
+
+/** Le regole con cui si valida un giorno: piatti al giorno e massimi per portata. */
+async function rulesOf(db, companyId) {
+  const company = await db.first('SELECT max_dishes AS maxDishes FROM companies WHERE id = ?', [companyId]);
+  const courses = await coursesOf(db, companyId);
+  return {
+    maxDishes: company?.maxDishes ?? 3,
+    courses: courses.map((c) => ({ id: c.id, name: c.name, max: c.max })),
+  };
+}
+
+/** Il menù di una settimana, con la lettera e l'indicazione di piatto unico. */
+function menuOf(db, companyId, w) {
+  return db.all(
+    `SELECT mi.id, mi.day, mi.name, s.id AS slotId, s.code, s.course_id AS courseId,
+            (mi.single_dish OR c.single_dish) AS single
+       FROM menu_items mi
+       JOIN slots s   ON s.id = mi.slot_id
+       JOIN courses c ON c.id = s.course_id
+      WHERE mi.company_id = ? AND mi.week = ?
+      ORDER BY mi.day, s.pos, s.id`,
+    [companyId, w]
+  );
 }
 
 // ── Autenticazione ────────────────────────────────────────────────────────────
@@ -124,15 +161,13 @@ async function staffWeek(request, env, db, url) {
   const { company, employee } = await requireEmployee(request, env, db);
   const w = week(url.searchParams.get('week'));
   const courses = await coursesOf(db, company.id);
-  const items = await db.all(
-    'SELECT id, day, course_id AS courseId, name FROM menu_items WHERE company_id = ? AND week = ? ORDER BY day, pos, id',
-    [company.id, w]
-  );
+  const rules = await rulesOf(db, company.id);
+  const items = (await menuOf(db, company.id, w)).map((item) => ({ ...item, single: !!item.single }));
   const order = await db.first('SELECT id, updated_at AS updatedAt FROM orders WHERE employee_id = ? AND week = ?', [
     employee.id,
     w,
   ]);
-  let days = {};
+  const days = {};
   if (order) {
     for (const row of await db.all('SELECT day, skip FROM order_days WHERE order_id = ?', [order.id])) {
       days[row.day] = { skip: !!row.skip, items: [] };
@@ -146,6 +181,7 @@ async function staffWeek(request, env, db, url) {
     company: company.name,
     employee,
     courses,
+    rules,
     menu: items,
     order: order ? { updatedAt: order.updatedAt, days } : null,
   });
@@ -156,14 +192,10 @@ async function staffOrder(request, env, db) {
   const body = await readJson(request);
   const w = week(body.week);
 
-  const courses = await coursesOf(db, company.id);
-  const maxByCourse = new Map(courses.map((c) => [c.id, c.max]));
+  const rules = await rulesOf(db, company.id);
   const allowed = new Map();
-  for (const row of await db.all('SELECT id, day, course_id FROM menu_items WHERE company_id = ? AND week = ?', [
-    company.id,
-    w,
-  ])) {
-    allowed.set(row.id, row);
+  for (const item of await menuOf(db, company.id, w)) {
+    allowed.set(item.id, { ...item, single: !!item.single });
   }
 
   if (!Array.isArray(body.days)) throw bad('Ordine non valido.');
@@ -172,18 +204,14 @@ async function staffOrder(request, env, db) {
     const day = int(entry?.day, { field: 'giorno', min: 1, max: 5 });
     const skip = entry.skip === true;
     const items = skip ? [] : [...new Set((Array.isArray(entry.items) ? entry.items : []).map((v) => id(v, 'piatto')))];
-    const perCourse = new Map();
-    for (const itemId of items) {
+    const scelte = items.map((itemId) => {
       const item = allowed.get(itemId);
       if (!item || item.day !== day) throw bad(`Piatto non disponibile per ${GIORNI[day - 1]}.`);
-      const count = (perCourse.get(item.course_id) ?? 0) + 1;
-      perCourse.set(item.course_id, count);
-      const max = maxByCourse.get(item.course_id) ?? 0;
-      if (count > max) {
-        const course = courses.find((c) => c.id === item.course_id);
-        throw bad(`${GIORNI[day - 1]}: massimo ${max} per "${course?.name ?? 'portata'}".`);
-      }
-    }
+      return item;
+    });
+    // Stesse regole che il client applica ai pulsanti: qui si rifiuta comunque.
+    const errore = verificaGiorno(scelte, rules);
+    if (errore) throw bad(`${GIORNI[day - 1]}: ${errore}`);
     parsed.push({ day, skip, items });
   }
   if (parsed.length !== new Set(parsed.map((p) => p.day)).size) throw bad("Giorno ripetuto nell'ordine.");
@@ -211,8 +239,8 @@ async function staffOrder(request, env, db) {
     });
     for (const itemId of entry.items) {
       statements.push({
-        sql: 'INSERT INTO order_choices (order_id, day, course_id, item_id) VALUES (?, ?, ?, ?)',
-        params: [order.id, entry.day, allowed.get(itemId).course_id, itemId],
+        sql: 'INSERT INTO order_choices (order_id, day, item_id) VALUES (?, ?, ?)',
+        params: [order.id, entry.day, itemId],
       });
     }
   }
@@ -330,11 +358,26 @@ async function managerWeek(request, env, db, url) {
 
 // ── Ristorante: aziende e regole ──────────────────────────────────────────────
 
+// La struttura con cui il ristorante lavora già oggi sul foglio settimanale.
 const DEFAULT_COURSES = [
-  { name: 'Primo', max: 1 },
-  { name: 'Secondo', max: 1 },
-  { name: 'Contorno', max: 1 },
+  { name: 'Primi', max: 1, single: false, slots: ['A', 'B'] },
+  { name: 'Secondi', max: 1, single: false, slots: ['E', 'F'] },
+  { name: 'Contorni', max: 2, single: false, slots: ['G', 'H'] },
+  { name: 'Dessert', max: 1, single: false, slots: ['L'] },
+  { name: 'Frutta', max: 1, single: false, slots: ['P'] },
+  { name: 'Pasto unico', max: 1, single: true, slots: ['T'] },
 ];
+const DEFAULT_MAX_DISHES = 3;
+
+function parseSlots(raw, field) {
+  const slots = Array.isArray(raw) ? raw : [];
+  if (!slots.length) throw bad(`La portata "${field}" deve avere almeno una lettera.`);
+  if (slots.length > 6) throw bad(`Troppe lettere per la portata "${field}".`);
+  return slots.map((slot) => ({
+    id: slot?.id ? Number(slot.id) : undefined,
+    code: str(typeof slot === 'string' ? slot : slot?.code, { field: 'lettera', max: 3 }).toUpperCase(),
+  }));
+}
 
 async function uniqueCode(db) {
   for (let i = 0; i < 20; i++) {
@@ -349,7 +392,7 @@ async function uniqueCode(db) {
 async function adminCompanies(request, env, db) {
   await requireSession(request, env, ['admin']);
   const companies = await db.all(
-    `SELECT c.id, c.name, c.code_staff AS codeStaff, c.code_manager AS codeManager,
+    `SELECT c.id, c.name, c.code_staff AS codeStaff, c.code_manager AS codeManager, c.max_dishes AS maxDishes,
             (SELECT COUNT(*) FROM employees e WHERE e.company_id = c.id AND e.active = 1) AS employees
      FROM companies c ORDER BY c.name COLLATE NOCASE`
   );
@@ -361,22 +404,30 @@ async function adminCreateCompany(request, env, db) {
   await requireSession(request, env, ['admin']);
   const body = await readJson(request);
   const name = str(body.name, { field: 'nome azienda', max: 80 });
+  const maxDishes = body.maxDishes === undefined ? DEFAULT_MAX_DISHES : int(body.maxDishes, { field: 'piatti al giorno', min: 1, max: 9 });
   const codeStaff = await uniqueCode(db);
   const codeManager = await uniqueCode(db);
-  const result = await db.run('INSERT INTO companies (name, code_staff, code_manager) VALUES (?, ?, ?)', [
-    name,
-    codeStaff,
-    codeManager,
-  ]);
+  const result = await db.run(
+    'INSERT INTO companies (name, code_staff, code_manager, max_dishes) VALUES (?, ?, ?, ?)',
+    [name, codeStaff, codeManager, maxDishes]
+  );
   const companyId = result.lastId;
   const courses = Array.isArray(body.courses) && body.courses.length ? body.courses : DEFAULT_COURSES;
-  await db.batch(
-    courses.map((c, i) => ({
-      sql: 'INSERT INTO courses (company_id, name, max_per_day, pos) VALUES (?, ?, ?, ?)',
-      params: [companyId, str(c.name, { field: 'portata', max: 40 }), int(c.max, { field: 'massimo', min: 0, max: 9 }), i],
-    }))
-  );
-  return json({ id: companyId, name, codeStaff, codeManager, courses: await coursesOf(db, companyId) }, 201);
+  let position = 0;
+  for (const raw of courses) {
+    const courseName = str(raw.name, { field: 'portata', max: 40 });
+    const course = await db.run(
+      'INSERT INTO courses (company_id, name, max_per_day, single_dish, pos) VALUES (?, ?, ?, ?, ?)',
+      [companyId, courseName, int(raw.max, { field: 'massimo', min: 0, max: 9 }), raw.single ? 1 : 0, position++]
+    );
+    await db.batch(
+      parseSlots(raw.slots, courseName).map((slot, i) => ({
+        sql: 'INSERT INTO slots (company_id, course_id, code, pos) VALUES (?, ?, ?, ?)',
+        params: [companyId, course.lastId, slot.code, position * 10 + i],
+      }))
+    );
+  }
+  return json({ id: companyId, name, codeStaff, codeManager, maxDishes, courses: await coursesOf(db, companyId) }, 201);
 }
 
 async function adminUpdateCompany(request, env, db, companyId) {
@@ -406,7 +457,7 @@ async function adminDeleteCompany(request, env, db, companyId) {
   return json({ ok: true });
 }
 
-/** Salvataggio differenziale: le portate invariate mantengono l'id, così gli ordini restano validi. */
+/** Salvataggio differenziale: portate e lettere invariate mantengono l'id, così gli ordini restano validi. */
 async function adminSaveCourses(request, env, db, companyId) {
   await requireSession(request, env, ['admin']);
   const company = await db.first('SELECT id FROM companies WHERE id = ?', [companyId]);
@@ -414,34 +465,81 @@ async function adminSaveCourses(request, env, db, companyId) {
   const body = await readJson(request);
   if (!Array.isArray(body.courses) || body.courses.length === 0) throw bad('Serve almeno una portata.');
   if (body.courses.length > 10) throw bad('Massimo 10 portate per azienda.');
+  const maxDishes = int(body.maxDishes, { field: 'piatti al giorno', min: 1, max: 9 });
 
   const existing = await coursesOf(db, companyId);
-  const keep = new Set();
-  const statements = [];
-  body.courses.forEach((c, i) => {
-    const name = str(c.name, { field: 'portata', max: 40 });
-    const max = int(c.max, { field: 'massimo', min: 0, max: 9 });
-    const found = c.id ? existing.find((e) => e.id === Number(c.id)) : null;
+  const existingSlots = existing.flatMap((c) => c.slots);
+  const keptCourses = new Set();
+  const keptSlots = new Set();
+  const updates = [];
+  const inserts = [];
+
+  body.courses.forEach((raw, i) => {
+    const courseName = str(raw.name, { field: 'portata', max: 40 });
+    const max = int(raw.max, { field: 'massimo', min: 0, max: 9 });
+    const single = raw.single ? 1 : 0;
+    const found = raw.id ? existing.find((e) => e.id === Number(raw.id)) : null;
+    const slots = parseSlots(raw.slots, courseName);
+    if (new Set(slots.map((s) => s.code)).size !== slots.length) throw bad(`Lettera ripetuta in "${courseName}".`);
+
     if (found) {
-      keep.add(found.id);
-      statements.push({
-        sql: 'UPDATE courses SET name = ?, max_per_day = ?, pos = ? WHERE id = ? AND company_id = ?',
-        params: [name, max, i, found.id, companyId],
+      keptCourses.add(found.id);
+      updates.push({
+        sql: 'UPDATE courses SET name = ?, max_per_day = ?, single_dish = ?, pos = ? WHERE id = ? AND company_id = ?',
+        params: [courseName, max, single, i, found.id, companyId],
+      });
+      slots.forEach((slot, j) => {
+        const slotFound = slot.id ? existingSlots.find((s) => s.id === slot.id) : null;
+        if (slotFound) {
+          keptSlots.add(slotFound.id);
+          updates.push({
+            sql: 'UPDATE slots SET code = ?, course_id = ?, pos = ? WHERE id = ? AND company_id = ?',
+            params: [slot.code, found.id, i * 10 + j, slotFound.id, companyId],
+          });
+        } else {
+          inserts.push({ courseRef: { existingId: found.id }, code: slot.code, pos: i * 10 + j });
+        }
       });
     } else {
-      statements.push({
-        sql: 'INSERT INTO courses (company_id, name, max_per_day, pos) VALUES (?, ?, ?, ?)',
-        params: [companyId, name, max, i],
-      });
+      inserts.push({ newCourse: { name: courseName, max, single, pos: i }, slots, base: i * 10 });
     }
   });
+
+  // Prima le cancellazioni, poi gli aggiornamenti: il vincolo di unicità
+  // sulle lettere non deve scattare mentre se ne libera una.
+  const statements = [];
+  for (const slot of existingSlots) {
+    if (!keptSlots.has(slot.id)) statements.push({ sql: 'DELETE FROM slots WHERE id = ?', params: [slot.id] });
+  }
   for (const course of existing) {
-    if (!keep.has(course.id)) {
-      statements.push({ sql: 'DELETE FROM courses WHERE id = ? AND company_id = ?', params: [course.id, companyId] });
+    if (!keptCourses.has(course.id)) statements.push({ sql: 'DELETE FROM courses WHERE id = ?', params: [course.id] });
+  }
+  statements.push(...updates);
+  await db.batch(statements);
+
+  for (const entry of inserts) {
+    if (entry.newCourse) {
+      const created = await db.run(
+        'INSERT INTO courses (company_id, name, max_per_day, single_dish, pos) VALUES (?, ?, ?, ?, ?)',
+        [companyId, entry.newCourse.name, entry.newCourse.max, entry.newCourse.single, entry.newCourse.pos]
+      );
+      await db.batch(
+        entry.slots.map((slot, j) => ({
+          sql: 'INSERT INTO slots (company_id, course_id, code, pos) VALUES (?, ?, ?, ?)',
+          params: [companyId, created.lastId, slot.code, entry.base + j],
+        }))
+      );
+    } else {
+      await db.run('INSERT INTO slots (company_id, course_id, code, pos) VALUES (?, ?, ?, ?)', [
+        companyId,
+        entry.courseRef.existingId,
+        entry.code,
+        entry.pos,
+      ]);
     }
   }
-  await db.batch(statements);
-  return json({ courses: await coursesOf(db, companyId) });
+  await db.run('UPDATE companies SET max_dishes = ? WHERE id = ?', [maxDishes, companyId]);
+  return json({ maxDishes, courses: await coursesOf(db, companyId) });
 }
 
 // ── Ristorante: menù ──────────────────────────────────────────────────────────
@@ -450,53 +548,47 @@ async function adminMenu(request, env, db, url) {
   await requireSession(request, env, ['admin']);
   const companyId = id(url.searchParams.get('companyId'), 'companyId');
   const w = week(url.searchParams.get('week'));
-  const company = await db.first('SELECT id, name FROM companies WHERE id = ?', [companyId]);
+  const company = await db.first('SELECT id, name, max_dishes AS maxDishes FROM companies WHERE id = ?', [companyId]);
   if (!company) throw new HttpError(404, 'Azienda non trovata.');
-  const items = await db.all(
-    'SELECT id, day, course_id AS courseId, name FROM menu_items WHERE company_id = ? AND week = ? ORDER BY day, pos, id',
-    [companyId, w]
-  );
+  const items = (await menuOf(db, companyId, w)).map((item) => ({ ...item, single: !!item.single }));
   const orders = await db.first('SELECT COUNT(*) AS n FROM orders WHERE company_id = ? AND week = ?', [companyId, w]);
   return json({ week: w, company, courses: await coursesOf(db, companyId), items, orders: orders.n });
 }
 
 /**
- * Salvataggio differenziale del menù: i piatti già presenti mantengono il proprio id,
- * così le scelte già inviate dai dipendenti non vengono azzerate a ogni modifica.
+ * La griglia della settimana: una casella per lettera e per giorno, come il
+ * foglio cartaceo. Le caselle invariate mantengono l'id del piatto, quindi
+ * correggere il menù non azzera gli ordini già inviati; e chi ha ordinato la
+ * "A" di lunedì continua ad avere la A anche se il piatto viene corretto.
  */
 async function saveMenuItems(db, companyId, w, incoming) {
-  const existing = await db.all('SELECT id, day, course_id AS courseId, name FROM menu_items WHERE company_id = ? AND week = ?', [
-    companyId,
-    w,
-  ]);
-  const keyOf = (day, courseId, name) => `${day}|${courseId}|${name.toLowerCase()}`;
-  const pool = new Map();
-  for (const item of existing) {
-    const key = keyOf(item.day, item.courseId, item.name);
-    if (!pool.has(key)) pool.set(key, []);
-    pool.get(key).push(item.id);
-  }
+  const existing = await db.all(
+    'SELECT id, day, slot_id AS slotId, name, single_dish AS single FROM menu_items WHERE company_id = ? AND week = ?',
+    [companyId, w]
+  );
+  const byCell = new Map(existing.map((item) => [`${item.slotId}:${item.day}`, item]));
   const statements = [];
-  const used = new Set();
-  const posByGroup = new Map();
+  const kept = new Set();
   for (const entry of incoming) {
-    const group = `${entry.day}|${entry.courseId}`;
-    const pos = posByGroup.get(group) ?? 0;
-    posByGroup.set(group, pos + 1);
-    const candidates = pool.get(keyOf(entry.day, entry.courseId, entry.name)) ?? [];
-    const reuse = candidates.find((itemId) => !used.has(itemId));
-    if (reuse) {
-      used.add(reuse);
-      statements.push({ sql: 'UPDATE menu_items SET name = ?, pos = ? WHERE id = ?', params: [entry.name, pos, reuse] });
+    const key = `${entry.slotId}:${entry.day}`;
+    const found = byCell.get(key);
+    if (found) {
+      kept.add(found.id);
+      if (found.name !== entry.name || !!found.single !== entry.single) {
+        statements.push({
+          sql: 'UPDATE menu_items SET name = ?, single_dish = ? WHERE id = ?',
+          params: [entry.name, entry.single ? 1 : 0, found.id],
+        });
+      }
     } else {
       statements.push({
-        sql: 'INSERT INTO menu_items (company_id, week, day, course_id, name, pos) VALUES (?, ?, ?, ?, ?, ?)',
-        params: [companyId, w, entry.day, entry.courseId, entry.name, pos],
+        sql: 'INSERT INTO menu_items (company_id, week, day, slot_id, name, single_dish) VALUES (?, ?, ?, ?, ?, ?)',
+        params: [companyId, w, entry.day, entry.slotId, entry.name, entry.single ? 1 : 0],
       });
     }
   }
   for (const item of existing) {
-    if (!used.has(item.id)) statements.push({ sql: 'DELETE FROM menu_items WHERE id = ?', params: [item.id] });
+    if (!kept.has(item.id)) statements.push({ sql: 'DELETE FROM menu_items WHERE id = ?', params: [item.id] });
   }
   await db.batch(statements);
 }
@@ -507,33 +599,32 @@ async function adminSaveMenu(request, env, db) {
   const companyId = id(body.companyId, 'companyId');
   const w = week(body.week);
   const courses = await coursesOf(db, companyId);
-  if (!courses.length) throw bad('Configura prima le portate di questa azienda.');
-  const courseIds = new Set(courses.map((c) => c.id));
+  const slotIds = new Set(courses.flatMap((c) => c.slots).map((s) => s.id));
+  if (!slotIds.size) throw bad('Configura prima le portate di questa azienda.');
   if (!Array.isArray(body.items)) throw bad('Menù non valido.');
-  if (body.items.length > 400) throw bad('Troppi piatti per una settimana.');
+  if (body.items.length > 200) throw bad('Troppi piatti per una settimana.');
+  const visti = new Set();
   const incoming = body.items.map((raw) => {
     const day = int(raw?.day, { field: 'giorno', min: 1, max: 5 });
-    const courseId = id(raw?.courseId, 'courseId');
-    if (!courseIds.has(courseId)) throw bad('Portata non appartenente a questa azienda.');
-    return { day, courseId, name: str(raw?.name, { field: 'piatto', max: 90 }) };
+    const slotId = id(raw?.slotId, 'slotId');
+    if (!slotIds.has(slotId)) throw bad('Lettera non appartenente a questa azienda.');
+    const key = `${slotId}:${day}`;
+    if (visti.has(key)) throw bad('La stessa casella compare due volte.');
+    visti.add(key);
+    return { day, slotId, name: str(raw?.name, { field: 'piatto', max: 90 }), single: raw?.single === true };
   });
   await saveMenuItems(db, companyId, w, incoming);
   return json({ ok: true, items: incoming.length });
 }
 
-/** "Copia a tutte": i piatti vengono riassegnati per NOME di portata, perché ogni azienda ha le sue. */
+/** "Copia a tutte": i piatti vengono riassegnati per LETTERA, perché ogni azienda ha la sua griglia. */
 async function adminCopyMenu(request, env, db) {
   await requireSession(request, env, ['admin']);
   const body = await readJson(request);
   const fromCompanyId = id(body.fromCompanyId, 'fromCompanyId');
   const w = week(body.week);
-  const sourceCourses = await coursesOf(db, fromCompanyId);
-  const sourceItems = await db.all(
-    'SELECT day, course_id AS courseId, name FROM menu_items WHERE company_id = ? AND week = ? ORDER BY day, pos, id',
-    [fromCompanyId, w]
-  );
+  const sourceItems = await menuOf(db, fromCompanyId, w);
   if (!sourceItems.length) throw bad('Il menù di partenza è vuoto.');
-  const courseNameById = new Map(sourceCourses.map((c) => [c.id, c.name.toLowerCase()]));
 
   const targets =
     body.toCompanyIds === 'all'
@@ -545,20 +636,21 @@ async function adminCopyMenu(request, env, db) {
   for (const targetId of targets) {
     const target = await db.first('SELECT id, name FROM companies WHERE id = ?', [targetId]);
     if (!target) continue;
-    const targetCourses = await coursesOf(db, targetId);
-    const byName = new Map(targetCourses.map((c) => [c.name.toLowerCase(), c.id]));
+    const byCode = new Map(
+      (await db.all('SELECT id, code FROM slots WHERE company_id = ?', [targetId])).map((s) => [s.code, s.id])
+    );
     const incoming = [];
-    let skipped = 0;
+    const mancanti = new Set();
     for (const item of sourceItems) {
-      const courseId = byName.get(courseNameById.get(item.courseId));
-      if (!courseId) {
-        skipped++;
+      const slotId = byCode.get(item.code);
+      if (!slotId) {
+        mancanti.add(item.code);
         continue;
       }
-      incoming.push({ day: item.day, courseId, name: item.name });
+      incoming.push({ day: item.day, slotId, name: item.name, single: !!item.single });
     }
     await saveMenuItems(db, targetId, w, incoming);
-    report.push({ company: target.name, copied: incoming.length, skipped });
+    report.push({ company: target.name, copied: incoming.length, missing: [...mancanti].sort() });
   }
   return json({ ok: true, report });
 }
@@ -570,12 +662,14 @@ async function adminImportWeek(request, env, db) {
   const fromWeek = week(body.fromWeek);
   const toWeek = week(body.toWeek);
   if (fromWeek === toWeek) throw bad('Le due settimane coincidono.');
-  const items = await db.all(
-    'SELECT day, course_id AS courseId, name FROM menu_items WHERE company_id = ? AND week = ? ORDER BY day, pos, id',
-    [companyId, fromWeek]
-  );
+  const items = await menuOf(db, companyId, fromWeek);
   if (!items.length) throw bad('La settimana di partenza non ha un menù.');
-  await saveMenuItems(db, companyId, toWeek, items);
+  await saveMenuItems(
+    db,
+    companyId,
+    toWeek,
+    items.map((item) => ({ day: item.day, slotId: item.slotId, name: item.name, single: !!item.single }))
+  );
   return json({ ok: true, items: items.length });
 }
 
@@ -584,11 +678,13 @@ async function adminImportWeek(request, env, db) {
 /** Cucina: porzioni per piatto e per giorno, sommando tutte le aziende. */
 async function reportKitchen(db, w) {
   const rows = await db.all(
-    `SELECT mi.day AS day, c.name AS course, MIN(c.pos) AS pos, mi.name AS dish, COUNT(*) AS qty
+    `SELECT mi.day AS day, c.name AS course, MIN(c.pos) AS pos, mi.name AS dish,
+            GROUP_CONCAT(DISTINCT s.code) AS codes, COUNT(*) AS qty
        FROM order_choices oc
-       JOIN orders o     ON o.id = oc.order_id
+       JOIN orders o      ON o.id = oc.order_id
        JOIN menu_items mi ON mi.id = oc.item_id
-       JOIN courses c    ON c.id = mi.course_id
+       JOIN slots s       ON s.id = mi.slot_id
+       JOIN courses c     ON c.id = s.course_id
       WHERE o.week = ?
       GROUP BY mi.day, c.name COLLATE NOCASE, mi.name COLLATE NOCASE
       ORDER BY mi.day, pos, c.name COLLATE NOCASE, mi.name COLLATE NOCASE`,
@@ -615,7 +711,7 @@ async function reportKitchen(db, w) {
       course = { name: row.course, dishes: [] };
       target.courses.push(course);
     }
-    course.dishes.push({ name: row.dish, qty: row.qty });
+    course.dishes.push({ name: row.dish, qty: row.qty, codes: String(row.codes ?? '').split(',').sort().join('/') });
   }
   return { week: w, label: weekLabel(w), days };
 }
@@ -631,15 +727,16 @@ async function reportDelivery(db, w, onlyCompanyId = null) {
   const rows = await db.all(
     `SELECT oc.day AS day, o.company_id AS companyId, co.name AS company,
             e.id AS employeeId, e.name AS employee, e.locker AS locker,
-            c.name AS course, c.pos AS coursePos, mi.name AS dish
+            s.code AS code, c.name AS course, s.pos AS slotPos, mi.name AS dish
        FROM order_choices oc
        JOIN orders o      ON o.id = oc.order_id
        JOIN employees e   ON e.id = o.employee_id
        JOIN companies co  ON co.id = o.company_id
        JOIN menu_items mi ON mi.id = oc.item_id
-       JOIN courses c     ON c.id = mi.course_id
+       JOIN slots s       ON s.id = mi.slot_id
+       JOIN courses c     ON c.id = s.course_id
       WHERE o.week = ?${filter}
-      ORDER BY oc.day, co.name COLLATE NOCASE, c.pos, mi.name COLLATE NOCASE`,
+      ORDER BY oc.day, co.name COLLATE NOCASE, s.pos, s.code`,
     params
   );
   const days = DAYS.map((day) => ({ day, label: dayLabel(w, day), companies: [] }));
@@ -656,7 +753,7 @@ async function reportDelivery(db, w, onlyCompanyId = null) {
       person = { employeeId: row.employeeId, name: row.employee, locker: row.locker, choices: [] };
       company.people.push(person);
     }
-    person.choices.push({ course: row.course, dish: row.dish });
+    person.choices.push({ code: row.code, course: row.course, dish: row.dish });
   }
   for (const day of days) {
     day.companies.sort((a, b) => a.company.localeCompare(b.company, 'it'));
@@ -666,11 +763,11 @@ async function reportDelivery(db, w, onlyCompanyId = null) {
 }
 
 function kitchenCsv(report) {
-  const rows = [['Giorno', 'Data', 'Portata', 'Piatto', 'Porzioni']];
+  const rows = [['Giorno', 'Data', 'Lettera', 'Portata', 'Piatto', 'Porzioni']];
   for (const day of report.days) {
     for (const course of day.courses) {
       for (const dish of course.dishes) {
-        rows.push([GIORNI[day.day - 1], day.label, course.name, dish.name, dish.qty]);
+        rows.push([GIORNI[day.day - 1], day.label, dish.codes, course.name, dish.name, dish.qty]);
       }
     }
   }
@@ -678,7 +775,7 @@ function kitchenCsv(report) {
 }
 
 function deliveryCsv(report) {
-  const rows = [['Giorno', 'Data', 'Azienda', 'Armadietto', 'Persona', 'Scelte']];
+  const rows = [['Giorno', 'Data', 'Azienda', 'Armadietto', 'Persona', 'Lettere', 'Scelte']];
   for (const day of report.days) {
     for (const company of day.companies) {
       for (const person of company.people) {
@@ -688,7 +785,8 @@ function deliveryCsv(report) {
           company.company,
           person.locker,
           person.name,
-          person.choices.map((c) => `${c.course}: ${c.dish}`).join(' | '),
+          person.choices.map((c) => c.code).join(''),
+          person.choices.map((c) => `${c.code} ${c.dish}`).join(' | '),
         ]);
       }
     }

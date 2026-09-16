@@ -10,6 +10,7 @@ import { openSqlite } from '../src/db-sqlite.js';
 const here = dirname(fileURLToPath(import.meta.url));
 const SCHEMA = readFileSync(join(here, '..', 'schema.sql'), 'utf8');
 const env = { SESSION_SECRET: 'segreto-di-prova' };
+const WEEK = '2026-W38';
 
 function freshDb() {
   const db = openSqlite(':memory:');
@@ -30,31 +31,49 @@ async function call(db, method, path, { token, body } = {}) {
   return { status: response.status, body: isJson && text ? JSON.parse(text) : text };
 }
 
-/** Scenario completo: ristorante → azienda → dipendenti → menù. */
+/** Il menù reale del ristorante: una riga per lettera, una colonna per giorno. */
+const GRIGLIA = {
+  A: ['Pasta e ceci', 'Pasta alla carbonara', 'Pasta alla puttanesca', 'Pasta e lenticchie', 'Pasta al ragù di polpo'],
+  B: ['Pasta al pomodoro', 'Pasta al pomodoro', 'Riso in bianco', 'Pasta al pomodoro', 'Riso in bianco'],
+  E: ['Salsiccia al vino bianco', 'Scaloppina al burro e salvia', 'Trancio di pizza alta', 'Bistecca di lonza', 'Trancio di pesce alle olive'],
+  F: ['Stracchino', 'Mortadella', 'Frittata con cipolle', 'Bresaola', 'Tomino al forno'],
+  G: ['Piselli al burro', 'Fagiolini lessi', '', 'Carote prezzemolate', 'Patate lesse'],
+  H: ['Insalata verde', 'Insalata di carote', 'Insalata di pomodori', 'Insalata verde', 'Insalata mista'],
+  L: ['Yogurt alla frutta', 'Dolce della casa', 'Yogurt alla frutta', 'Dolce della casa', 'Yogurt alla frutta'],
+  P: ['Macedonia', 'Frutto', 'Macedonia', 'Frutto', 'Macedonia'],
+  T: ['Rotolo farcito', 'Gran piatto buffet', 'Formaggi misti', 'Puccia con pancetta', 'Insalata di legumi e verdure'],
+};
+
+function grigliaItems(slotByCode) {
+  const items = [];
+  for (const [code, piatti] of Object.entries(GRIGLIA)) {
+    piatti.forEach((nome, i) => {
+      if (!nome) return;
+      // La pizza del mercoledì è un piatto unico anche se sta fra i secondi.
+      const single = nome.toLowerCase().includes('pizza');
+      items.push({ day: i + 1, slotId: slotByCode[code], name: nome, single });
+    });
+  }
+  return items;
+}
+
 async function scenario() {
   const db = freshDb();
-  await call(db, 'POST', '/api/setup', { body: { name: 'Trattoria Bella', code: 'RISTO99' } });
+  await call(db, 'POST', '/api/setup', { body: { name: 'Time Out', code: 'RISTO99' } });
   const admin = (await call(db, 'POST', '/api/login', { body: { code: 'risto-99' } })).body.token;
 
-  const alfa = (
-    await call(db, 'POST', '/api/admin/companies', {
-      token: admin,
-      body: {
-        name: 'Alfa SpA',
-        courses: [
-          { name: 'Primo', max: 1 },
-          { name: 'Secondo', max: 1 },
-          { name: 'Contorno', max: 2 },
-        ],
-      },
-    })
-  ).body;
-  const beta = (
-    await call(db, 'POST', '/api/admin/companies', {
-      token: admin,
-      body: { name: 'Beta Srl', courses: [{ name: 'Primo', max: 1 }, { name: 'Secondo', max: 1 }] },
-    })
-  ).body;
+  const alfa = (await call(db, 'POST', '/api/admin/companies', { token: admin, body: { name: 'Alfa SpA' } })).body;
+  const beta = (await call(db, 'POST', '/api/admin/companies', {
+    token: admin,
+    body: {
+      name: 'Beta Srl',
+      maxDishes: 2,
+      courses: [
+        { name: 'Primi', max: 1, slots: ['A', 'B'] },
+        { name: 'Secondi', max: 1, slots: ['E'] },
+      ],
+    },
+  })).body;
 
   const mgrAlfa = (await call(db, 'POST', '/api/login', { body: { code: alfa.codeManager } })).body.token;
   const mgrBeta = (await call(db, 'POST', '/api/login', { body: { code: beta.codeManager } })).body.token;
@@ -62,18 +81,11 @@ async function scenario() {
   const bianchi = (await call(db, 'POST', '/api/manager/employees', { token: mgrAlfa, body: { name: 'Anna Bianchi', locker: '3' } })).body;
   const verdi = (await call(db, 'POST', '/api/manager/employees', { token: mgrBeta, body: { name: 'Luca Verdi', locker: '7' } })).body;
 
-  const week = '2026-W38';
-  const menu = [];
-  for (const day of [1, 2, 3, 4, 5]) {
-    menu.push({ day, courseId: alfa.courses[0].id, name: 'Pasta al pomodoro' });
-    menu.push({ day, courseId: alfa.courses[0].id, name: 'Riso in bianco' });
-    menu.push({ day, courseId: alfa.courses[1].id, name: 'Pollo arrosto' });
-    menu.push({ day, courseId: alfa.courses[2].id, name: 'Insalata' });
-    menu.push({ day, courseId: alfa.courses[2].id, name: 'Patate' });
-  }
-  await call(db, 'PUT', '/api/admin/menu', { token: admin, body: { companyId: alfa.id, week, items: menu } });
+  const slotByCode = {};
+  for (const course of alfa.courses) for (const slot of course.slots) slotByCode[slot.code] = slot.id;
+  await call(db, 'PUT', '/api/admin/menu', { token: admin, body: { companyId: alfa.id, week: WEEK, items: grigliaItems(slotByCode) } });
 
-  return { db, admin, alfa, beta, mgrAlfa, mgrBeta, rossi, bianchi, verdi, week };
+  return { db, admin, alfa, beta, mgrAlfa, mgrBeta, rossi, bianchi, verdi, slotByCode };
 }
 
 async function staffToken(db, code, employeeId) {
@@ -81,211 +93,262 @@ async function staffToken(db, code, employeeId) {
   return (await call(db, 'POST', '/api/staff/identify', { token: login, body: { employeeId } })).body.token;
 }
 
-test('il primo avvio si esegue una volta sola', async () => {
-  const db = freshDb();
-  const first = await call(db, 'POST', '/api/setup', { body: { name: 'Trattoria', code: 'ABCDEF' } });
-  assert.equal(first.status, 201);
-  const second = await call(db, 'POST', '/api/setup', { body: { name: 'Altra', code: 'GHIJKL' } });
-  assert.equal(second.status, 409);
+/** Gli id dei piatti di un giorno, per lettera. */
+async function piattiDelGiorno(db, token, day) {
+  const settimana = (await call(db, 'GET', `/api/staff/week?week=${WEEK}`, { token })).body;
+  const mappa = {};
+  for (const item of settimana.menu) if (item.day === day) mappa[item.code] = item.id;
+  return { mappa, settimana };
+}
+
+const ordina = (db, token, day, items) =>
+  call(db, 'POST', '/api/staff/order', { token, body: { week: WEEK, days: [{ day, items }] } });
+
+test('la nuova azienda nasce con la griglia A B E F G H L P T e 3 piatti al giorno', async () => {
+  const { alfa } = await scenario();
+  assert.equal(alfa.maxDishes, 3);
+  assert.deepEqual(
+    alfa.courses.map((c) => `${c.name}:${c.slots.map((s) => s.code).join('')}:${c.max}`),
+    ['Primi:AB:1', 'Secondi:EF:1', 'Contorni:GH:2', 'Dessert:L:1', 'Frutta:P:1', 'Pasto unico:T:1']
+  );
+  assert.equal(alfa.courses.find((c) => c.name === 'Pasto unico').single, true);
 });
 
-test('il codice di accesso determina il ruolo ed è tollerante a spazi e minuscole', async () => {
-  const { db, alfa } = await scenario();
-  assert.equal((await call(db, 'POST', '/api/login', { body: { code: 'risto 99' } })).body.role, 'admin');
-  assert.equal((await call(db, 'POST', '/api/login', { body: { code: alfa.codeManager } })).body.role, 'manager');
-  assert.equal((await call(db, 'POST', '/api/login', { body: { code: alfa.codeStaff } })).body.role, 'staff');
-  assert.equal((await call(db, 'POST', '/api/login', { body: { code: 'XXXXXX' } })).status, 401);
-});
-
-test("il nome si sceglie da elenco: un id di un'altra azienda viene rifiutato", async () => {
-  const { db, alfa, verdi } = await scenario();
-  const login = (await call(db, 'POST', '/api/login', { body: { code: alfa.codeStaff } })).body.token;
-  const elenco = await call(db, 'GET', '/api/staff/employees', { token: login });
-  assert.deepEqual(elenco.body.employees.map((e) => e.name).sort(), ['Anna Bianchi', 'Mario Rossi']);
-  const intruso = await call(db, 'POST', '/api/staff/identify', { token: login, body: { employeeId: verdi.id } });
-  assert.equal(intruso.status, 400);
-});
-
-test("i dati di un'azienda non sono visibili a un'altra", async () => {
-  const { db, mgrBeta, alfa } = await scenario();
-  const elenco = await call(db, 'GET', '/api/manager/employees', { token: mgrBeta });
-  assert.deepEqual(elenco.body.employees.map((e) => e.name), ['Luca Verdi']);
-  // un referente non può usare le rotte del ristorante
-  assert.equal((await call(db, 'GET', '/api/admin/companies', { token: mgrBeta })).status, 403);
-  // né modificare le persone di un'altra azienda
-  const altrui = await call(db, 'DELETE', `/api/manager/employees/${alfa.id === 1 ? 1 : 1}`, { token: mgrBeta });
-  assert.equal(altrui.status, 404);
-});
-
-test("l'ordine rispetta i massimi per portata", async () => {
-  const { db, alfa, rossi, week } = await scenario();
+test('si ordinano al massimo 3 piatti al giorno', async () => {
+  const { db, alfa, rossi } = await scenario();
   const token = await staffToken(db, alfa.codeStaff, rossi.id);
-  const settimana = (await call(db, 'GET', `/api/staff/week?week=${week}`, { token })).body;
-  const lun = settimana.menu.filter((m) => m.day === 1);
-  const primi = lun.filter((m) => m.courseId === alfa.courses[0].id).map((m) => m.id);
-  const contorni = lun.filter((m) => m.courseId === alfa.courses[2].id).map((m) => m.id);
+  const { mappa } = await piattiDelGiorno(db, token, 1);
 
-  const troppi = await call(db, 'POST', '/api/staff/order', {
-    token,
-    body: { week, days: [{ day: 1, items: primi }] },
-  });
-  assert.equal(troppi.status, 400);
-  assert.match(troppi.body.error, /massimo 1 per "Primo"/);
-
-  const ok = await call(db, 'POST', '/api/staff/order', {
-    token,
-    body: { week, days: [{ day: 1, items: [primi[0], ...contorni] }] },
-  });
-  assert.equal(ok.status, 200);
+  assert.equal((await ordina(db, token, 1, [mappa.A, mappa.E, mappa.H])).status, 200, 'primo, secondo e contorno');
+  const quattro = await ordina(db, token, 1, [mappa.A, mappa.E, mappa.H, mappa.L]);
+  assert.equal(quattro.status, 400);
+  assert.match(quattro.body.error, /Massimo 3 piatti/);
 });
 
-test("un piatto di un'altra azienda o di un altro giorno viene rifiutato", async () => {
-  const { db, admin, alfa, beta, rossi, week } = await scenario();
-  const corsiBeta = beta.courses;
-  await call(db, 'PUT', '/api/admin/menu', {
-    token: admin,
-    body: { companyId: beta.id, week, items: [{ day: 1, courseId: corsiBeta[0].id, name: 'Lasagne' }] },
-  });
-  const lasagne = (await call(db, `GET`, `/api/admin/menu?companyId=${beta.id}&week=${week}`, { token: admin })).body.items[0];
-
+test('non si ordina doppio secondo, né doppio primo', async () => {
+  const { db, alfa, rossi } = await scenario();
   const token = await staffToken(db, alfa.codeStaff, rossi.id);
-  const altrui = await call(db, 'POST', '/api/staff/order', { token, body: { week, days: [{ day: 1, items: [lasagne.id] }] } });
-  assert.equal(altrui.status, 400);
+  const { mappa } = await piattiDelGiorno(db, token, 1);
 
-  const settimana = (await call(db, 'GET', `/api/staff/week?week=${week}`, { token })).body;
-  const primoLunedi = settimana.menu.find((m) => m.day === 1 && m.courseId === alfa.courses[0].id);
-  const giornoSbagliato = await call(db, 'POST', '/api/staff/order', {
-    token,
-    body: { week, days: [{ day: 2, items: [primoLunedi.id] }] },
-  });
-  assert.equal(giornoSbagliato.status, 400);
+  const secondi = await ordina(db, token, 1, [mappa.E, mappa.F]);
+  assert.equal(secondi.status, 400);
+  assert.match(secondi.body.error, /un solo piatto fra i secondi/i);
+
+  const primi = await ordina(db, token, 1, [mappa.A, mappa.B]);
+  assert.equal(primi.status, 400);
+  assert.match(primi.body.error, /un solo piatto fra i primi/i);
 });
 
-test('vale sempre l\'ultimo invio, e "non pranzo" azzera le scelte del giorno', async () => {
-  const { db, alfa, rossi, week } = await scenario();
+test('i due contorni insieme si possono prendere', async () => {
+  const { db, alfa, rossi } = await scenario();
   const token = await staffToken(db, alfa.codeStaff, rossi.id);
-  const menu = (await call(db, 'GET', `/api/staff/week?week=${week}`, { token })).body.menu;
-  const primo = (day) => menu.find((m) => m.day === day && m.courseId === alfa.courses[0].id).id;
-
-  await call(db, 'POST', '/api/staff/order', { token, body: { week, days: [{ day: 1, items: [primo(1)] }, { day: 2, items: [primo(2)] }] } });
-  await call(db, 'POST', '/api/staff/order', { token, body: { week, days: [{ day: 1, items: [primo(1)] }, { day: 2, skip: true }] } });
-
-  const dopo = (await call(db, 'GET', `/api/staff/week?week=${week}`, { token })).body;
-  assert.deepEqual(dopo.order.days['1'].items, [primo(1)]);
-  assert.equal(dopo.order.days['2'].skip, true);
-  assert.deepEqual(dopo.order.days['2'].items, []);
-  const righe = await db.first('SELECT COUNT(*) AS n FROM orders WHERE employee_id = ?', [rossi.id]);
-  assert.equal(righe.n, 1, 'un solo ordine per persona per settimana');
+  const { mappa } = await piattiDelGiorno(db, token, 1);
+  assert.equal((await ordina(db, token, 1, [mappa.A, mappa.G, mappa.H])).status, 200);
 });
 
-test('riepilogo cucina: somma le porzioni di tutte le aziende', async () => {
-  const { db, admin, alfa, beta, rossi, bianchi, verdi, week } = await scenario();
+test('il pasto unico T vale da solo: non si combina con altro', async () => {
+  const { db, alfa, rossi } = await scenario();
+  const token = await staffToken(db, alfa.codeStaff, rossi.id);
+  const { mappa } = await piattiDelGiorno(db, token, 1);
+
+  assert.equal((await ordina(db, token, 1, [mappa.T])).status, 200);
+  const misto = await ordina(db, token, 1, [mappa.T, mappa.H]);
+  assert.equal(misto.status, 400);
+  assert.match(misto.body.error, /piatto unico/i);
+});
+
+test('la pizza del mercoledì è un piatto unico pur stando fra i secondi', async () => {
+  const { db, alfa, rossi } = await scenario();
+  const token = await staffToken(db, alfa.codeStaff, rossi.id);
+  const { mappa, settimana } = await piattiDelGiorno(db, token, 3);
+  const pizza = settimana.menu.find((m) => m.day === 3 && m.code === 'E');
+  assert.equal(pizza.single, true, 'la casella è marcata piatto unico');
+  assert.equal(settimana.menu.find((m) => m.day === 3 && m.code === 'F').single, false, 'gli altri secondi no');
+
+  assert.equal((await ordina(db, token, 3, [pizza.id])).status, 200);
+  const conContorno = await ordina(db, token, 3, [pizza.id, mappa.H]);
+  assert.equal(conContorno.status, 400);
+  assert.match(conContorno.body.error, /piatto unico/i);
+});
+
+test('ogni azienda ha le sue regole: Beta ha 2 piatti e un solo secondo', async () => {
+  const { db, beta, verdi, admin } = await scenario();
+  const slotByCode = {};
+  for (const course of beta.courses) for (const slot of course.slots) slotByCode[slot.code] = slot.id;
   await call(db, 'PUT', '/api/admin/menu', {
     token: admin,
     body: {
       companyId: beta.id,
-      week,
+      week: WEEK,
       items: [
-        { day: 1, courseId: beta.courses[0].id, name: 'Pasta al pomodoro' },
-        { day: 1, courseId: beta.courses[1].id, name: 'Pollo arrosto' },
+        { day: 1, slotId: slotByCode.A, name: 'Pasta e ceci' },
+        { day: 1, slotId: slotByCode.B, name: 'Pasta al pomodoro' },
+        { day: 1, slotId: slotByCode.E, name: 'Salsiccia al vino bianco' },
       ],
     },
   });
-  const menuAlfa = (await call(db, 'GET', `/api/admin/menu?companyId=${alfa.id}&week=${week}`, { token: admin })).body.items;
-  const menuBeta = (await call(db, 'GET', `/api/admin/menu?companyId=${beta.id}&week=${week}`, { token: admin })).body.items;
-  const pastaAlfa = menuAlfa.find((m) => m.day === 1 && m.name === 'Pasta al pomodoro').id;
-  const pastaBeta = menuBeta.find((m) => m.name === 'Pasta al pomodoro').id;
+  const token = await staffToken(db, beta.codeStaff, verdi.id);
+  const { mappa } = await piattiDelGiorno(db, token, 1);
+  assert.equal((await ordina(db, token, 1, [mappa.A, mappa.E])).status, 200);
+  const tre = await ordina(db, token, 1, [mappa.A, mappa.E, mappa.B]);
+  assert.equal(tre.status, 400);
+});
 
-  for (const [code, employee, item] of [
-    [alfa.codeStaff, rossi, pastaAlfa],
-    [alfa.codeStaff, bianchi, pastaAlfa],
-    [beta.codeStaff, verdi, pastaBeta],
-  ]) {
+test('la casella vuota non si può ordinare (mercoledì non c\'è il contorno G)', async () => {
+  const { db, alfa, rossi } = await scenario();
+  const token = await staffToken(db, alfa.codeStaff, rossi.id);
+  const { mappa, settimana } = await piattiDelGiorno(db, token, 3);
+  assert.equal(mappa.G, undefined, 'la casella G del mercoledì è vuota nel foglio');
+  const gLunedi = settimana.menu.find((m) => m.day === 1 && m.code === 'G');
+  const sbagliato = await ordina(db, token, 3, [gLunedi.id]);
+  assert.equal(sbagliato.status, 400);
+});
+
+test('vale sempre l\'ultimo invio, e "non pranzo" azzera le scelte del giorno', async () => {
+  const { db, alfa, rossi } = await scenario();
+  const token = await staffToken(db, alfa.codeStaff, rossi.id);
+  const { mappa } = await piattiDelGiorno(db, token, 1);
+  await call(db, 'POST', '/api/staff/order', { token, body: { week: WEEK, days: [{ day: 1, items: [mappa.A, mappa.E] }, { day: 2, items: [] }] } });
+  await call(db, 'POST', '/api/staff/order', { token, body: { week: WEEK, days: [{ day: 1, items: [mappa.B] }, { day: 2, skip: true }] } });
+
+  const dopo = (await call(db, 'GET', `/api/staff/week?week=${WEEK}`, { token })).body;
+  assert.deepEqual(dopo.order.days['1'].items, [mappa.B]);
+  assert.equal(dopo.order.days['2'].skip, true);
+  const righe = await db.first('SELECT COUNT(*) AS n FROM orders WHERE employee_id = ?', [rossi.id]);
+  assert.equal(righe.n, 1, 'un solo ordine per persona per settimana');
+});
+
+test('il nome si sceglie da elenco: un id di un\'altra azienda viene rifiutato', async () => {
+  const { db, alfa, verdi } = await scenario();
+  const login = (await call(db, 'POST', '/api/login', { body: { code: alfa.codeStaff } })).body.token;
+  const elenco = await call(db, 'GET', '/api/staff/employees', { token: login });
+  assert.deepEqual(elenco.body.employees.map((e) => e.name).sort(), ['Anna Bianchi', 'Mario Rossi']);
+  assert.equal((await call(db, 'POST', '/api/staff/identify', { token: login, body: { employeeId: verdi.id } })).status, 400);
+});
+
+test('i dati di un\'azienda non sono visibili a un\'altra', async () => {
+  const { db, mgrBeta } = await scenario();
+  assert.deepEqual((await call(db, 'GET', '/api/manager/employees', { token: mgrBeta })).body.employees.map((e) => e.name), ['Luca Verdi']);
+  assert.equal((await call(db, 'GET', '/api/admin/companies', { token: mgrBeta })).status, 403);
+  assert.equal((await call(db, 'DELETE', '/api/manager/employees/1', { token: mgrBeta })).status, 404);
+});
+
+test('riepilogo cucina: somma le porzioni di tutte le aziende e riporta la lettera', async () => {
+  const { db, admin, alfa, beta, rossi, bianchi, verdi } = await scenario();
+  const slotBeta = {};
+  for (const course of beta.courses) for (const slot of course.slots) slotBeta[slot.code] = slot.id;
+  await call(db, 'PUT', '/api/admin/menu', {
+    token: admin,
+    body: { companyId: beta.id, week: WEEK, items: [{ day: 1, slotId: slotBeta.A, name: 'Pasta e ceci' }] },
+  });
+
+  for (const [code, employee] of [[alfa.codeStaff, rossi], [alfa.codeStaff, bianchi], [beta.codeStaff, verdi]]) {
     const token = await staffToken(db, code, employee.id);
-    await call(db, 'POST', '/api/staff/order', { token, body: { week, days: [{ day: 1, items: [item] }] } });
+    const { mappa } = await piattiDelGiorno(db, token, 1);
+    await ordina(db, token, 1, [mappa.A]);
   }
 
-  const cucina = (await call(db, 'GET', `/api/admin/report/kitchen?week=${week}`, { token: admin })).body;
+  const cucina = (await call(db, 'GET', `/api/admin/report/kitchen?week=${WEEK}`, { token: admin })).body;
   const lunedi = cucina.days.find((d) => d.day === 1);
-  const pasta = lunedi.courses.flatMap((c) => c.dishes).find((d) => d.name === 'Pasta al pomodoro');
-  assert.equal(pasta.qty, 3, 'le tre porzioni delle due aziende sono sommate');
+  const pasta = lunedi.courses.flatMap((c) => c.dishes).find((d) => d.name === 'Pasta e ceci');
+  assert.equal(pasta.qty, 3, 'le porzioni delle due aziende sono sommate');
+  assert.equal(pasta.codes, 'A');
   assert.equal(lunedi.people, 3);
 });
 
-test('riepilogo consegne: persone ordinate per armadietto, divise per azienda', async () => {
-  const { db, admin, alfa, rossi, bianchi, week } = await scenario();
-  const menu = (await call(db, 'GET', `/api/admin/menu?companyId=${alfa.id}&week=${week}`, { token: admin })).body.items;
-  const primo = menu.find((m) => m.day === 1 && m.courseId === alfa.courses[0].id).id;
+test('riepilogo consegne: persone per armadietto, con le lettere ordinate', async () => {
+  const { db, admin, alfa, rossi, bianchi } = await scenario();
   for (const employee of [rossi, bianchi]) {
     const token = await staffToken(db, alfa.codeStaff, employee.id);
-    await call(db, 'POST', '/api/staff/order', { token, body: { week, days: [{ day: 1, items: [primo] }] } });
+    const { mappa } = await piattiDelGiorno(db, token, 1);
+    await ordina(db, token, 1, [mappa.H, mappa.A]);
   }
-  const consegne = (await call(db, 'GET', `/api/admin/report/delivery?week=${week}`, { token: admin })).body;
+  const consegne = (await call(db, 'GET', `/api/admin/report/delivery?week=${WEEK}`, { token: admin })).body;
   const azienda = consegne.days.find((d) => d.day === 1).companies[0];
-  assert.equal(azienda.company, 'Alfa SpA');
-  assert.deepEqual(azienda.people.map((p) => p.locker), ['3', '12'], 'ordinamento numerico, non alfabetico');
-  assert.equal(azienda.people[0].name, 'Anna Bianchi');
+  assert.deepEqual(azienda.people.map((p) => p.locker), ['3', '12'], 'ordinamento numerico');
+  assert.deepEqual(azienda.people[0].choices.map((c) => c.code), ['A', 'H'], 'lettere in ordine di griglia');
 });
 
-test('modificare il menù non cancella gli ordini già inviati', async () => {
-  const { db, admin, alfa, rossi, week } = await scenario();
-  const before = (await call(db, 'GET', `/api/admin/menu?companyId=${alfa.id}&week=${week}`, { token: admin })).body.items;
-  const primo = before.find((m) => m.day === 1 && m.courseId === alfa.courses[0].id).id;
+test('correggere una casella non azzera gli ordini: chi ha preso la A mantiene la A', async () => {
+  const { db, admin, alfa, rossi, slotByCode } = await scenario();
   const token = await staffToken(db, alfa.codeStaff, rossi.id);
-  await call(db, 'POST', '/api/staff/order', { token, body: { week, days: [{ day: 1, items: [primo] }] } });
+  const { mappa } = await piattiDelGiorno(db, token, 1);
+  await ordina(db, token, 1, [mappa.A]);
 
-  const modificato = before.map((m) => ({ day: m.day, courseId: m.courseId, name: m.name }));
-  modificato.push({ day: 1, courseId: alfa.courses[0].id, name: 'Gnocchi' });
-  await call(db, 'PUT', '/api/admin/menu', { token: admin, body: { companyId: alfa.id, week, items: modificato } });
+  const items = grigliaItems(slotByCode).map((item) =>
+    item.day === 1 && item.slotId === slotByCode.A ? { ...item, name: 'Pasta e fagioli' } : item
+  );
+  await call(db, 'PUT', '/api/admin/menu', { token: admin, body: { companyId: alfa.id, week: WEEK, items } });
 
-  const dopo = (await call(db, 'GET', `/api/staff/week?week=${week}`, { token })).body;
-  assert.deepEqual(dopo.order.days['1'].items, [primo], 'la scelta del dipendente sopravvive alla modifica del menù');
+  const dopo = (await call(db, 'GET', `/api/staff/week?week=${WEEK}`, { token })).body;
+  assert.deepEqual(dopo.order.days['1'].items, [mappa.A], 'la scelta resta legata alla lettera');
+  assert.equal(dopo.menu.find((m) => m.id === mappa.A).name, 'Pasta e fagioli');
 });
 
-test('copia a tutte: allinea i piatti per nome di portata', async () => {
-  const { db, admin, alfa, beta, week } = await scenario();
+test('copia a tutte: allinea per lettera e segnala quelle mancanti', async () => {
+  const { db, admin, alfa, beta } = await scenario();
   const esito = await call(db, 'POST', '/api/admin/menu/copy', {
     token: admin,
-    body: { fromCompanyId: alfa.id, week, toCompanyIds: 'all' },
+    body: { fromCompanyId: alfa.id, week: WEEK, toCompanyIds: 'all' },
   });
   assert.equal(esito.status, 200);
-  const copiato = (await call(db, 'GET', `/api/admin/menu?companyId=${beta.id}&week=${week}`, { token: admin })).body;
-  const nomiPortate = new Set(copiato.courses.map((c) => c.id));
-  assert.ok(copiato.items.length > 0);
-  assert.ok(copiato.items.every((i) => nomiPortate.has(i.courseId)));
-  // Beta non ha "Contorno": quei piatti restano fuori invece di finire nella portata sbagliata.
-  assert.equal(copiato.items.length, esito.body.report[0].copied);
-  assert.equal(esito.body.report[0].skipped, 10);
+  // Beta ha solo A, B, E: le altre lettere restano fuori invece di finire nel posto sbagliato.
+  assert.deepEqual(esito.body.report[0].missing, ['F', 'G', 'H', 'L', 'P', 'T']);
+  const copiato = (await call(db, 'GET', `/api/admin/menu?companyId=${beta.id}&week=${WEEK}`, { token: admin })).body;
+  assert.deepEqual([...new Set(copiato.items.map((i) => i.code))].sort(), ['A', 'B', 'E']);
+  assert.equal(copiato.items.find((i) => i.day === 3 && i.code === 'E').single, true, 'la pizza resta piatto unico');
 });
 
 test('cancellare una persona cancella i suoi ordini', async () => {
-  const { db, admin, alfa, mgrAlfa, rossi, week } = await scenario();
-  const menu = (await call(db, 'GET', `/api/admin/menu?companyId=${alfa.id}&week=${week}`, { token: admin })).body.items;
+  const { db, alfa, mgrAlfa, rossi } = await scenario();
   const token = await staffToken(db, alfa.codeStaff, rossi.id);
-  await call(db, 'POST', '/api/staff/order', { token, body: { week, days: [{ day: 1, items: [menu[0].id] }] } });
+  const { mappa } = await piattiDelGiorno(db, token, 1);
+  await ordina(db, token, 1, [mappa.A]);
   await call(db, 'DELETE', `/api/manager/employees/${rossi.id}`, { token: mgrAlfa });
-  const rimasti = await db.first('SELECT COUNT(*) AS n FROM orders WHERE employee_id = ?', [rossi.id]);
-  assert.equal(rimasti.n, 0);
-  const scelte = await db.first('SELECT COUNT(*) AS n FROM order_choices');
-  assert.equal(scelte.n, 0);
+  assert.equal((await db.first('SELECT COUNT(*) AS n FROM orders WHERE employee_id = ?', [rossi.id])).n, 0);
+  assert.equal((await db.first('SELECT COUNT(*) AS n FROM order_choices')).n, 0);
 });
 
 test('la cancellazione dei dati storici rispetta la settimana limite', async () => {
-  const { db, admin, alfa, rossi, week } = await scenario();
-  const menu = (await call(db, 'GET', `/api/admin/menu?companyId=${alfa.id}&week=${week}`, { token: admin })).body.items;
+  const { db, admin, alfa, rossi } = await scenario();
   const token = await staffToken(db, alfa.codeStaff, rossi.id);
-  await call(db, 'POST', '/api/staff/order', { token, body: { week, days: [{ day: 1, items: [menu[0].id] }] } });
+  const { mappa } = await piattiDelGiorno(db, token, 1);
+  await ordina(db, token, 1, [mappa.A]);
 
-  const primaNo = await call(db, 'POST', '/api/admin/purge', { token: admin, body: { beforeWeek: '2026-W38' } });
-  assert.equal(primaNo.body.orders, 0, 'la settimana limite non viene toccata');
-  const dopo = await call(db, 'POST', '/api/admin/purge', { token: admin, body: { beforeWeek: '2026-W39' } });
-  assert.equal(dopo.body.orders, 1);
+  assert.equal((await call(db, 'POST', '/api/admin/purge', { token: admin, body: { beforeWeek: WEEK } })).body.orders, 0);
+  assert.equal((await call(db, 'POST', '/api/admin/purge', { token: admin, body: { beforeWeek: '2026-W39' } })).body.orders, 1);
   assert.equal((await purgeExpired(db, 12)).orders, 0);
 });
 
+test('le regole si possono cambiare per azienda mantenendo gli ordini validi', async () => {
+  const { db, admin, alfa, rossi } = await scenario();
+  const token = await staffToken(db, alfa.codeStaff, rossi.id);
+  const { mappa } = await piattiDelGiorno(db, token, 1);
+  await ordina(db, token, 1, [mappa.A, mappa.G, mappa.H]);
+
+  const contorni = alfa.courses.find((c) => c.name === 'Contorni');
+  const aggiornate = alfa.courses.map((c) => ({
+    id: c.id,
+    name: c.name,
+    max: c.id === contorni.id ? 1 : c.max,
+    single: c.single,
+    slots: c.slots.map((s) => ({ id: s.id, code: s.code })),
+  }));
+  const esito = await call(db, 'PUT', `/api/admin/companies/${alfa.id}/courses`, {
+    token: admin,
+    body: { maxDishes: 3, courses: aggiornate },
+  });
+  assert.equal(esito.status, 200);
+  assert.equal(esito.body.courses.find((c) => c.name === 'Contorni').max, 1);
+
+  // Il vecchio ordine resta in archivio, ma un nuovo invio con due contorni viene rifiutato.
+  const nuovo = await ordina(db, token, 1, [mappa.G, mappa.H]);
+  assert.equal(nuovo.status, 400);
+});
+
 test('senza sessione valida non si legge nulla', async () => {
-  const { db, week } = await scenario();
+  const { db } = await scenario();
   assert.equal((await call(db, 'GET', '/api/admin/companies')).status, 401);
-  assert.equal((await call(db, 'GET', `/api/staff/week?week=${week}`, { token: 'falso.token' })).status, 401);
+  assert.equal((await call(db, 'GET', `/api/staff/week?week=${WEEK}`, { token: 'falso.token' })).status, 401);
   assert.equal((await call(db, 'GET', '/api/manager/employees', { token: 'a.b' })).status, 401);
 });

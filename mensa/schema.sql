@@ -15,18 +15,33 @@ CREATE TABLE IF NOT EXISTS companies (
   name         TEXT NOT NULL,
   code_staff   TEXT NOT NULL UNIQUE,   -- codice consegnato ai dipendenti
   code_manager TEXT NOT NULL UNIQUE,   -- codice del referente aziendale
+  max_dishes   INTEGER NOT NULL DEFAULT 3 CHECK (max_dishes BETWEEN 1 AND 9), -- piatti al giorno da contratto
   created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- Portate configurabili per azienda (es. Primo max 1, Contorno max 2)
+-- Portate configurabili per azienda (es. Primi max 1, Contorni max 2)
 CREATE TABLE IF NOT EXISTS courses (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   company_id  INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
   name        TEXT NOT NULL,
   max_per_day INTEGER NOT NULL DEFAULT 1 CHECK (max_per_day >= 0),
+  single_dish INTEGER NOT NULL DEFAULT 0,  -- portata "pasto unico": vale da sola un pasto
   pos         INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_courses_company ON courses(company_id, pos);
+
+-- Le righe del menù settimanale, identificate dalla lettera con cui il
+-- ristorante e le aziende parlano già oggi: A e B i primi, E e F i secondi,
+-- G e H i contorni, L il dessert, P la frutta, T il pasto unico.
+CREATE TABLE IF NOT EXISTS slots (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  course_id  INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+  code       TEXT NOT NULL,
+  pos        INTEGER NOT NULL DEFAULT 0,
+  UNIQUE (company_id, code)
+);
+CREATE INDEX IF NOT EXISTS idx_slots_company ON slots(company_id, pos);
 
 CREATE TABLE IF NOT EXISTS employees (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -38,16 +53,18 @@ CREATE TABLE IF NOT EXISTS employees (
 );
 CREATE INDEX IF NOT EXISTS idx_employees_company ON employees(company_id, active);
 
+-- Un piatto per lettera, per giorno: è esattamente la griglia dell'Excel.
 CREATE TABLE IF NOT EXISTS menu_items (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  week       TEXT NOT NULL,
-  day        INTEGER NOT NULL CHECK (day BETWEEN 1 AND 5),
-  course_id  INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
-  name       TEXT NOT NULL,
-  pos        INTEGER NOT NULL DEFAULT 0
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  company_id  INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  week        TEXT NOT NULL,
+  day         INTEGER NOT NULL CHECK (day BETWEEN 1 AND 5),
+  slot_id     INTEGER NOT NULL REFERENCES slots(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  single_dish INTEGER NOT NULL DEFAULT 0,  -- es. la pizza del mercoledì fra i secondi
+  UNIQUE (slot_id, week, day)
 );
-CREATE INDEX IF NOT EXISTS idx_menu_week ON menu_items(company_id, week, day, course_id, pos);
+CREATE INDEX IF NOT EXISTS idx_menu_week ON menu_items(company_id, week, day);
 CREATE INDEX IF NOT EXISTS idx_menu_week_all ON menu_items(week);
 
 -- Un ordine per persona per settimana, sovrascritto ad ogni invio.
@@ -70,10 +87,9 @@ CREATE TABLE IF NOT EXISTS order_days (
 );
 
 CREATE TABLE IF NOT EXISTS order_choices (
-  order_id  INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
-  day       INTEGER NOT NULL CHECK (day BETWEEN 1 AND 5),
-  course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
-  item_id   INTEGER NOT NULL REFERENCES menu_items(id) ON DELETE CASCADE,
+  order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+  day      INTEGER NOT NULL CHECK (day BETWEEN 1 AND 5),
+  item_id  INTEGER NOT NULL REFERENCES menu_items(id) ON DELETE CASCADE,
   PRIMARY KEY (order_id, day, item_id)
 );
 CREATE INDEX IF NOT EXISTS idx_choices_item ON order_choices(item_id);
