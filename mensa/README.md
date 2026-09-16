@@ -85,26 +85,31 @@ test girano in memoria senza mock.
 Il client non usa `innerHTML` in nessun punto: tutto il DOM è costruito con nodi di testo, e la
 Content-Security-Policy vieta script e stili esterni.
 
-## Tema (colori e font del ristorante)
+## Tema (colori e font)
 
-Tutta l'identità visiva sta in `public/tema.css`: tre colori del marchio e due font.
-Cambiarli lì cambia intestazione, pulsanti, scelte selezionate, titoli e testo di ogni schermata.
+L'app veste l'identita del **Ristorante Pizzeria Time Out** di Lemignano di Collecchio, con i colori
+campionati dal loro sito:
 
-```css
---brand: #0f6f5c;        /* intestazione, pulsante di invio, bordo della scelta attiva */
---brand-dark: #0b5546;   /* stesso colore piu scuro: testo e link */
---brand-soft: #e3f2ee;   /* stesso colore molto schiarito: fondo della scelta attiva */
---font-testo: ...;
---font-titoli: ...;
-```
+| | |
+| --- | --- |
+| `#F2A45E` arancio del pannello | pulsante di invio, barra della settimana |
+| `#EF885A` arancio delle etichette | bordo della scelta attiva |
+| `#A6522E` arancio scurito | testo, link, etichette di portata |
+| `#15130F` nero caldo | intestazione, testo |
+| `#F8F6F1` crema | schede e sfondi |
 
-Tre valori vanno allineati a mano perche non leggono il CSS: `theme-color` in `public/index.html`,
-`theme_color` in `public/manifest.webmanifest` e il `fill` in `public/icona.svg`.
+Una differenza voluta rispetto al sito: loro scrivono in bianco sull'arancio (contrasto 2,05:1), qui
+sopra l'arancio va il nero del marchio (9,05:1). Queste schermate si leggono in piedi in fabbrica, e
+tutte le combinazioni di testo dell'app superano WCAG AA.
 
-Per un font web basta aggiungere il `<link>` a Google Fonts in `index.html` e `privacy.html`: la
-Content-Security-Policy del Worker consente gia `fonts.googleapis.com` e `fonts.gstatic.com`.
+Il carattere e **Jost**, il geometrico piu vicino a quello del sito, auto-ospitato in `public/font/`
+(SIL Open Font License, ~40 KB). Niente Google Fonts: nessun indirizzo IP dei dipendenti finisce a
+terzi e la Content-Security-Policy resta limitata alla sola origine dell'app. I titoli usano Jost, i
+nomi dei piatti il carattere di sistema, perche quello e il testo che si legge di corsa.
 
-I colori attuali sono un segnaposto neutro, non l'identita di un ristorante specifico.
+Tutto sta in `public/tema.css`: cambiare quei valori riveste l'intera applicazione. Tre riferimenti
+vanno allineati a mano perche non leggono il CSS: `theme-color` in `public/index.html`, `theme_color`
+in `public/manifest.webmanifest` e i colori di `public/icona.svg`.
 
 ## Privacy
 

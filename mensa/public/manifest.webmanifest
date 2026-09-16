@@ -3,8 +3,8 @@
   "short_name": "Mensa",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f2f4f6",
-  "theme_color": "#0f6f5c",
+  "background_color": "#EFEAE1",
+  "theme_color": "#15130F",
   "lang": "it",
   "icons": [{ "src": "/icona.svg", "sizes": "any", "type": "image/svg+xml" }]
 }

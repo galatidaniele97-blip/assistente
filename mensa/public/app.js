@@ -12,6 +12,7 @@ const store = {
   employee: null,
   week: currentWeek(),
   tab: '',
+  appName: '',
   companyId: null,
 };
 
@@ -122,7 +123,7 @@ function logout(message) {
   store.employee = null;
   store.tab = '';
   renderTopbar();
-  viewLogin(message);
+  viewLogin(message).catch(() => {});
 }
 
 // ── Barra superiore ───────────────────────────────────────────────────────────
@@ -202,7 +203,7 @@ function viewSetup() {
   const nome = h('input', { class: 'field', id: 'setup-nome', placeholder: 'Trattoria Da Noi', autocomplete: 'off' });
   const codice = h('input', { class: 'field code-input', id: 'setup-codice', maxlength: '12', autocomplete: 'off' });
   paint(h('div', { class: 'login' },
-    h('div', { class: 'logo', text: '\u{1F37D}' }),
+    h('img', { class: 'logo-img', src: '/icona.svg', alt: '', width: '64', height: '64' }),
     h('h1', { text: 'Primo avvio' }),
     h('p', { class: 'claim', text: 'Imposta il nome del ristorante e il codice con cui accederai.' }),
     h('div', { class: 'stack' },
@@ -214,13 +215,22 @@ function viewSetup() {
         onclick: () => guard(async () => {
           const result = await api('/api/setup', { method: 'POST', body: { name: nome.value, code: codice.value } });
           toast(`Codice del ristorante: ${result.code}`);
-          viewLogin(`Conserva il codice ${result.code}: serve per accedere.`);
+          store.appName = result.name;
+          await viewLogin(`Conserva il codice ${result.code}: serve per accedere.`);
         }),
       }))));
 }
 
-function viewLogin(message) {
+async function viewLogin(message) {
   setSubmitbar();
+  if (!store.appName) {
+    // Il nome del ristorante rende la schermata riconoscibile a chi la apre.
+    try {
+      store.appName = (await api('/api/status')).name || 'Mensa';
+    } catch {
+      store.appName = 'Mensa';
+    }
+  }
   const codice = h('input', {
     class: 'field code-input',
     id: 'codice',
@@ -245,8 +255,8 @@ function viewLogin(message) {
     if (event.key === 'Enter') entra();
   });
   paint(h('div', { class: 'login' },
-    h('div', { class: 'logo', text: '\u{1F37D}' }),
-    h('h1', { text: 'Mensa' }),
+    h('img', { class: 'logo-img', src: '/icona.svg', alt: '', width: '64', height: '64' }),
+    h('h1', { text: store.appName }),
     h('p', { class: 'claim', text: 'Inserisci il codice che ti è stato consegnato.' }),
     message ? h('div', { class: 'notice', style: 'margin-bottom:14px', text: message }) : null,
     h('div', { class: 'stack' },

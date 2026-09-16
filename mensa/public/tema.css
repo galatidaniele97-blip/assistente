@@ -1,45 +1,70 @@
 /* ═══════════════════════════════════════════════════════════════════════════
-   TEMA — unico file da toccare per vestire l'app con l'identità del ristorante.
-   Cambiando i valori qui sotto cambiano barra superiore, pulsanti, scelte
-   selezionate, titoli e testo di tutte le schermate. Nessun altro file.
+   TEMA — identità visiva del Ristorante Pizzeria Time Out (Lemignano di
+   Collecchio). Colori campionati dal sito ristorantetimeout.it:
 
-   Da allineare a mano quando cambi --brand (non leggono il CSS):
-     - public/index.html  →  <meta name="theme-color" content="...">
+     arancio del pannello   #F2A45E → #F2AC5F (sfumatura)
+     arancio delle etichette #EF885A
+     nero caldo             #15130F
+     crema                  #F8F6F1
+     grigio del testo       #666666
+
+   Il sito scrive in bianco sull'arancio: bello a vedersi, ma è un contrasto
+   di 2,05:1. Qui l'arancio resta identico e sopra ci va il nero del marchio
+   (9,05:1), perché queste schermate si leggono in piedi in fabbrica. Tutte le
+   combinazioni di testo dell'app superano WCAG AA.
+
+   Da allineare a mano se cambi i colori (non leggono il CSS):
+     - public/index.html  →  <meta name="theme-color">
      - public/manifest.webmanifest → "theme_color"
-     - public/icona.svg   →  <rect ... fill="...">
+     - public/icona.svg
    ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Jost, il carattere geometrico più vicino a quello del sito. Auto-ospitato:
+   nessuna chiamata a Google Fonts, quindi nessun indirizzo IP dei dipendenti
+   comunicato a terzi (SIL Open Font License, vedi font/LICENSE-jost.txt). */
+@font-face { font-family: 'Jost'; font-style: normal; font-weight: 400; font-display: swap; src: url('/font/jost-400.woff2') format('woff2'); }
+@font-face { font-family: 'Jost'; font-style: normal; font-weight: 500; font-display: swap; src: url('/font/jost-500.woff2') format('woff2'); }
+@font-face { font-family: 'Jost'; font-style: normal; font-weight: 600; font-display: swap; src: url('/font/jost-600.woff2') format('woff2'); }
+@font-face { font-family: 'Jost'; font-style: normal; font-weight: 700; font-display: swap; src: url('/font/jost-700.woff2') format('woff2'); }
 
 :root {
   /* ── Identità del ristorante ──────────────────────────────────────────── */
 
-  /* Colore principale: intestazione, pulsante di invio, bordo della scelta attiva. */
-  --brand: #0f6f5c;
-  /* Variante scura dello stesso colore: testo del brand su fondo chiaro, link. */
-  --brand-dark: #0b5546;
-  /* Variante tenue (stesso colore molto schiarito): fondo della scelta attiva. */
-  --brand-soft: #e3f2ee;
+  --brand: #F2A45E;         /* arancio del pannello: pulsante di invio, barra settimana */
+  --brand-strong: #EF885A;  /* arancio delle etichette: bordo della scelta attiva */
+  --brand-dark: #A6522E;    /* arancio scurito: testo, link, etichette di sezione */
+  --brand-soft: #FBEADC;    /* velatura d'arancio: fondo della scelta attiva */
+  --ink: #15130F;           /* nero caldo: intestazione, testo */
 
-  /* Font. Se il marchio usa font web, aggiungi il <link> in index.html e
-     privacy.html: la Content-Security-Policy consente già Google Fonts. */
+  /* Titoli nel carattere del marchio, contenuto nel carattere di sistema:
+     i nomi dei piatti sono ciò che si legge di corsa, e lì vince la
+     leggibilità. Per usare Jost ovunque basta cambiare --font-testo. */
+  --font-titoli: 'Jost', system-ui, sans-serif;
   --font-testo: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-titoli: var(--font-testo);
-  /* Spaziatura delle lettere dei titoli: utile per i caratteri condensati. */
-  --titoli-spacing: 0;
-  /* Maiuscoletto sui titoli delle sezioni: "none" oppure "uppercase". */
+  --titoli-spacing: 0.01em;
   --titoli-transform: none;
 
-  /* ── Neutri e misure (di norma non si toccano) ────────────────────────── */
-  --bg: #f2f4f6;
-  --surface: #ffffff;
-  --surface-2: #f7f9fa;
-  --text: #14181d;
-  --muted: #5c6773;
-  --line: #d9dee4;
-  --danger: #b3261e;
-  --danger-soft: #fdecea;
-  --warn: #8a5a00;
-  --warn-soft: #fff4d6;
+  /* ── Neutri derivati dalla crema del sito ─────────────────────────────── */
+  --bg: #EFEAE1;
+  --surface: #F8F6F1;
+  --surface-2: #F2EEE6;
+  --text: #15130F;
+  --muted: #63605A;
+  --line: #DFD8CC;          /* divisori e bordi delle schede */
+  --line-strong: #918574;   /* bordo dei comandi: 3:1, come chiede WCAG 1.4.11 */
+
+  /* ── Stati ────────────────────────────────────────────────────────────── */
+  --ok: #3F6B4A;
+  --ok-soft: #E6EEE7;
+  --neutral: #4A4F55;       /* "non pranzo": neutro, per non confonderlo col marchio */
+  --neutral-soft: #E9E6E0;
+  --danger: #9B1C15;
+  --danger-soft: #FBEAE7;
+  --warn: #A6522E;
+  --warn-soft: #FBEADC;
+
+  /* ── Misure ───────────────────────────────────────────────────────────── */
   --radius: 14px;
   --tap: 56px;
-  --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.1);
+  --shadow: 0 1px 2px rgba(21, 19, 15, 0.06), 0 1px 3px rgba(21, 19, 15, 0.1);
 }
