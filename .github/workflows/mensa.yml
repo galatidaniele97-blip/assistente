@@ -1,0 +1,23 @@
+name: Mensa
+
+on:
+  push:
+    paths: ['mensa/**', '.github/workflows/mensa.yml']
+  pull_request:
+    paths: ['mensa/**', '.github/workflows/mensa.yml']
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mensa
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test di dominio
+        run: npm test
+      - name: Sintassi dei moduli
+        run: for f in src/*.js dev-server.js public/app.js public/shared/*.js scripts/*.js; do cp "$f" /tmp/c.mjs && node --check /tmp/c.mjs; done

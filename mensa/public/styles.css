@@ -343,6 +343,7 @@ dialog {
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
 }
 dialog::backdrop { background: rgba(21, 19, 15, 0.5); }
+dialog.wide { width: min(960px, calc(100vw - 32px)); }
 
 footer.legal { max-width: 720px; margin: 28px auto 0; padding: 0 16px; font-size: 0.8rem; color: var(--muted); text-align: center; }
 
@@ -425,3 +426,10 @@ footer.legal { max-width: 720px; margin: 28px auto 0; padding: 0 16px; font-size
   cursor: pointer;
 }
 .unico-toggle[aria-pressed="true"] { background: var(--brand); border-color: var(--brand-strong); color: var(--ink); }
+
+/* ── Settimana chiusa dalla scadenza ─────────────────────────────────────── */
+.notice-lock { background: var(--neutral-soft); color: var(--neutral); border-left: 4px solid var(--ink); }
+.opt[disabled][aria-pressed="true"] { opacity: 1; }          /* le scelte fatte restano leggibili */
+.skip-btn[disabled] { opacity: 0.6; cursor: default; }
+.menu-grid.anteprima td { min-width: 120px; padding: 4px 6px; font-size: 0.86rem; border-bottom: 1px solid var(--line); }
+.menu-grid.anteprima th { min-width: 0; }

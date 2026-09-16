@@ -5,9 +5,15 @@
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS restaurant (
-  id          INTEGER PRIMARY KEY CHECK (id = 1),
-  name        TEXT NOT NULL,
-  code        TEXT NOT NULL
+  id            INTEGER PRIMARY KEY CHECK (id = 1),
+  name          TEXT NOT NULL,
+  code_hash     TEXT NOT NULL,                 -- PBKDF2: il codice del ristorante non sta in chiaro
+  token_version INTEGER NOT NULL DEFAULT 1,    -- cambia al cambio codice: le sessioni vecchie muoiono
+  -- Scadenza per ordinare la settimana successiva: giorno della settimana
+  -- precedente (1 = lunedì ... 7 = domenica) e ora locale. Poi tutto si blocca.
+  deadline_day  INTEGER NOT NULL DEFAULT 5 CHECK (deadline_day BETWEEN 1 AND 7),
+  deadline_time TEXT NOT NULL DEFAULT '12:00',
+  timezone      TEXT NOT NULL DEFAULT 'Europe/Rome'
 );
 
 CREATE TABLE IF NOT EXISTS companies (
@@ -16,6 +22,7 @@ CREATE TABLE IF NOT EXISTS companies (
   code_staff   TEXT NOT NULL UNIQUE,   -- codice consegnato ai dipendenti
   code_manager TEXT NOT NULL UNIQUE,   -- codice del referente aziendale
   max_dishes   INTEGER NOT NULL DEFAULT 3 CHECK (max_dishes BETWEEN 1 AND 9), -- piatti al giorno da contratto
+  token_version INTEGER NOT NULL DEFAULT 1,  -- cambia quando si rigenerano i codici: le sessioni vecchie muoiono
   created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

@@ -48,7 +48,11 @@ async function sessionSecret() {
 await mkdir(join(here, 'data'), { recursive: true });
 const db = openSqlite(DB_FILE);
 db.handle.exec(await readFile(join(here, 'schema.sql'), 'utf8'));
-const env = { SESSION_SECRET: await sessionSecret(), RETENTION_WEEKS: process.env.RETENTION_WEEKS ?? 12 };
+const env = {
+  SESSION_SECRET: await sessionSecret(),
+  RETENTION_WEEKS: process.env.RETENTION_WEEKS ?? 12,
+  SETUP_CODE: process.env.SETUP_CODE,
+};
 
 async function toRequest(req) {
   const chunks = [];
@@ -101,6 +105,8 @@ const retention = async () => {
 await retention();
 setInterval(retention, 24 * 3600 * 1000).unref?.();
 
-server.listen(PORT, () => {
-  console.log(`Mensa in ascolto su http://localhost:${PORT}  (database: ${DB_FILE})`);
+// Solo sull'interfaccia locale: un server di sviluppo non deve essere raggiungibile dalla rete.
+const HOST = process.env.HOST || '127.0.0.1';
+server.listen(PORT, HOST, () => {
+  console.log(`Mensa in ascolto su http://${HOST}:${PORT}  (database: ${DB_FILE})`);
 });

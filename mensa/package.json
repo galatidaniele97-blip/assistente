@@ -8,7 +8,8 @@
     "start": "node dev-server.js",
     "test": "node --test --no-warnings test/api.test.js",
     "deploy": "wrangler deploy",
-    "db:init": "wrangler d1 execute mensa --remote --file=schema.sql"
+    "db:init": "wrangler d1 execute mensa --remote --file=schema.sql",
+    "codice": "node scripts/codice-ristorante.js"
   },
   "engines": { "node": ">=22.5" }
 }

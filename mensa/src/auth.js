@@ -3,7 +3,8 @@
 
 import { HttpError } from './util.js';
 
-const TTL_SECONDS = { admin: 12 * 3600, manager: 12 * 3600, staff: 30 * 24 * 3600 };
+// Il telefono del dipendente può essere condiviso in reparto: una settimana, non un mese.
+const TTL_SECONDS = { admin: 12 * 3600, manager: 12 * 3600, staff: 7 * 24 * 3600 };
 // Alfabeto senza caratteri ambigui (0/O, 1/I/L): i codici vengono letti a voce e trascritti.
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
@@ -56,14 +57,60 @@ export async function readToken(secret, token) {
   return payload;
 }
 
-/** Estrae la sessione dall'header Authorization e ne verifica il ruolo. */
-export async function requireSession(request, env, roles) {
+/**
+ * Estrae la sessione dall'header Authorization, ne verifica ruolo e "versione".
+ * La versione cambia quando si rigenerano i codici: da quel momento i token
+ * emessi prima non valgono più, anche se non sono ancora scaduti.
+ */
+export async function requireSession(request, env, roles, db) {
   const header = request.headers.get('authorization') || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
   const session = await readToken(env.SESSION_SECRET, token);
   if (!session) throw new HttpError(401, 'Sessione scaduta. Inserisci di nuovo il codice.');
   if (!roles.includes(session.r)) throw new HttpError(403, 'Operazione non consentita per questo accesso.');
+  if (db) {
+    const row =
+      session.r === 'admin'
+        ? await db.first('SELECT token_version AS v FROM restaurant WHERE id = 1')
+        : await db.first('SELECT token_version AS v FROM companies WHERE id = ?', [session.c]);
+    if (!row || row.v !== session.v) throw new HttpError(401, 'Accesso revocato. Inserisci il nuovo codice.');
+  }
   return session;
+}
+
+// ── Hash del codice del ristorante ───────────────────────────────────────────
+// È la chiave di tutte le aziende: nel database ne sta solo l'impronta (PBKDF2).
+const PBKDF2_ITERATIONS = 100000;
+
+function hex(bytes) {
+  return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function unhex(text) {
+  return Uint8Array.from(text.match(/.{2}/g) ?? [], (h) => parseInt(h, 16));
+}
+
+async function pbkdf2(code, salt, iterations) {
+  const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(code), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations }, keyMaterial, 256);
+  return new Uint8Array(bits);
+}
+
+export async function hashCode(code) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const derived = await pbkdf2(code, salt, PBKDF2_ITERATIONS);
+  return `pbkdf2$${PBKDF2_ITERATIONS}$${hex(salt)}$${hex(derived)}`;
+}
+
+export async function verifyCode(code, stored) {
+  const [scheme, iterations, salt, expected] = String(stored ?? '').split('$');
+  if (scheme !== 'pbkdf2') return false;
+  const derived = await pbkdf2(code, unhex(salt), Number(iterations));
+  const want = unhex(expected);
+  if (want.length !== derived.length) return false;
+  let diff = 0;
+  for (let i = 0; i < want.length; i++) diff |= want[i] ^ derived[i];
+  return diff === 0;
 }
 
 /** I codici si leggono a voce e si scrivono male: normalizziamo prima di confrontare. */

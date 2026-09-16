@@ -6,11 +6,14 @@ import { fileURLToPath } from 'node:url';
 
 import { handleApi, purgeExpired } from '../src/api.js';
 import { openSqlite } from '../src/db-sqlite.js';
+import { currentWeek, shiftWeek } from '../public/shared/week.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SCHEMA = readFileSync(join(here, '..', 'schema.sql'), 'utf8');
 const env = { SESSION_SECRET: 'segreto-di-prova' };
-const WEEK = '2026-W38';
+// Si ordina per una settimana ancora aperta: quella corrente è già chiusa dalla scadenza del venerdì.
+const WEEK = shiftWeek(currentWeek(), 2);
+const NEXT = shiftWeek(WEEK, 1);
 
 function freshDb() {
   const db = openSqlite(':memory:');
@@ -316,7 +319,7 @@ test('la cancellazione dei dati storici rispetta la settimana limite', async () 
   await ordina(db, token, 1, [mappa.A]);
 
   assert.equal((await call(db, 'POST', '/api/admin/purge', { token: admin, body: { beforeWeek: WEEK } })).body.orders, 0);
-  assert.equal((await call(db, 'POST', '/api/admin/purge', { token: admin, body: { beforeWeek: '2026-W39' } })).body.orders, 1);
+  assert.equal((await call(db, 'POST', '/api/admin/purge', { token: admin, body: { beforeWeek: NEXT } })).body.orders, 1);
   assert.equal((await purgeExpired(db, 12)).orders, 0);
 });
 
@@ -386,4 +389,110 @@ test('il foglio cucina elenca i piatti nell\'ordine delle lettere', async () => 
   const cucina = (await call(db, 'GET', `/api/admin/report/kitchen?week=${WEEK}`, { token: admin })).body;
   const primi = cucina.days.find((d) => d.day === 1).courses.find((c) => c.name === 'Primi');
   assert.deepEqual(primi.dishes.map((d) => d.codes), ['A', 'B'], 'prima la A, poi la B');
+});
+
+
+test('dopo la scadenza la settimana non si modifica più', async () => {
+  const { db, alfa, rossi, admin } = await scenario();
+  const token = await staffToken(db, alfa.codeStaff, rossi.id);
+  // La settimana corrente è chiusa: la sua scadenza (venerdì scorso alle 12) è passata.
+  const chiusa = currentWeek();
+  const settimana = (await call(db, 'GET', `/api/staff/week?week=${chiusa}`, { token })).body;
+  assert.equal(settimana.deadline.locked, true);
+  assert.match(settimana.deadline.label, /venerdì .* alle 12:00/);
+  const tentativo = await call(db, 'POST', '/api/staff/order', { token, body: { week: chiusa, days: [{ day: 1, skip: true }] } });
+  assert.equal(tentativo.status, 423);
+  assert.match(tentativo.body.error, /Ordini chiusi/);
+
+  // Quella fra due settimane è aperta e riporta quando chiuderà.
+  const aperta = (await call(db, 'GET', `/api/staff/week?week=${WEEK}`, { token })).body;
+  assert.equal(aperta.deadline.locked, false);
+  assert.ok(aperta.deadline.at > Date.now());
+
+  // Il ristorante può spostare la scadenza: l'etichetta della settimana aperta cambia di conseguenza.
+  const salvate = await call(db, 'PUT', '/api/admin/settings', {
+    token: admin,
+    body: { name: 'Time Out', deadline: { day: 4, time: '18:30', timezone: 'Europe/Rome' } },
+  });
+  assert.equal(salvate.status, 200);
+  const dopo = (await call(db, 'GET', `/api/staff/week?week=${WEEK}`, { token })).body;
+  assert.match(dopo.deadline.label, /^giovedì .* alle 18:30$/);
+});
+
+test('rigenerare i codici revoca le sessioni già aperte', async () => {
+  const { db, admin, alfa, rossi, mgrAlfa } = await scenario();
+  const staff = await staffToken(db, alfa.codeStaff, rossi.id);
+  assert.equal((await call(db, 'GET', '/api/manager/employees', { token: mgrAlfa })).status, 200);
+  await call(db, 'POST', `/api/admin/companies/${alfa.id}/codes`, { token: admin });
+  assert.equal((await call(db, 'GET', '/api/manager/employees', { token: mgrAlfa })).status, 401, 'il referente deve rientrare');
+  assert.equal((await call(db, 'GET', `/api/staff/week?week=${WEEK}`, { token: staff })).status, 401, 'anche il dipendente');
+  assert.equal((await call(db, 'GET', '/api/admin/companies', { token: admin })).status, 200, 'il ristorante no');
+});
+
+test('il codice del ristorante è conservato come impronta e si può cambiare', async () => {
+  const { db, admin } = await scenario();
+  const row = await db.first('SELECT code_hash FROM restaurant WHERE id = 1');
+  assert.ok(row.code_hash.startsWith('pbkdf2$') && !row.code_hash.includes('RISTO99'));
+
+  const sbagliato = await call(db, 'POST', '/api/admin/code', { token: admin, body: { current: 'NO', next: 'NUOVO123' } });
+  assert.equal(sbagliato.status, 403);
+  const cambiato = await call(db, 'POST', '/api/admin/code', { token: admin, body: { current: 'RISTO99', next: 'NUOVO123' } });
+  assert.equal(cambiato.status, 200);
+  assert.equal((await call(db, 'GET', '/api/admin/companies', { token: admin })).status, 401, 'la vecchia sessione decade');
+  assert.equal((await call(db, 'GET', '/api/admin/companies', { token: cambiato.body.token })).status, 200, 'quella nuova vale');
+  assert.equal((await call(db, 'POST', '/api/login', { body: { code: 'RISTO99' } })).status, 401);
+  assert.equal((await call(db, 'POST', '/api/login', { body: { code: 'nuovo 123' } })).status, 200);
+});
+
+test('con SETUP_CODE impostato il primo avvio è protetto', async () => {
+  const db = freshDb();
+  const envProtetto = { ...env, SETUP_CODE: 'INSTALLA' };
+  const request = (body) =>
+    handleApi(new Request('http://t.local/api/setup', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }), envProtetto, db);
+  assert.equal((await request({ name: 'T', code: 'RISTO99' })).status, 403);
+  assert.equal((await request({ name: 'T', code: 'RISTO99', setupCode: 'installa' })).status, 201);
+});
+
+test('il referente importa un elenco incollato: nuovi, già presenti, armadietti occupati', async () => {
+  const { db, mgrAlfa } = await scenario();
+  const esito = await call(db, 'POST', '/api/manager/employees/bulk', {
+    token: mgrAlfa,
+    body: {
+      people: [
+        { name: 'Giulia Conti', locker: '7' },
+        { name: 'mario rossi', locker: '40' },      // c'è già (maiuscole diverse): saltato
+        { name: 'Paolo Neri', locker: '12' },       // armadietto di Mario Rossi: in conflitto
+        { name: 'Sara Gallo', locker: '5' },
+      ],
+    },
+  });
+  assert.equal(esito.status, 201);
+  assert.equal(esito.body.inserted, 2);
+  assert.deepEqual(esito.body.skipped, ['mario rossi']);
+  assert.deepEqual(esito.body.conflicts, [{ name: 'Paolo Neri', locker: '12', by: 'Mario Rossi' }]);
+  const elenco = (await call(db, 'GET', '/api/manager/employees', { token: mgrAlfa })).body.employees;
+  assert.equal(elenco.length, 4);
+});
+
+test('un corpo JSON senza content-type o troppo grande viene rifiutato', async () => {
+  const { db } = await scenario();
+  const senzaTipo = await handleApi(new Request('http://t.local/api/login', { method: 'POST', body: JSON.stringify({ code: 'X' }) }), env, db);
+  assert.equal(senzaTipo.status, 400);
+  const enorme = await handleApi(
+    new Request('http://t.local/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: 'x'.repeat(300 * 1024) }) }),
+    env,
+    db
+  );
+  assert.equal(enorme.status, 413);
+});
+
+test('i CSV non eseguono formule: un nome che inizia con = viene neutralizzato', async () => {
+  const { db, admin, alfa, mgrAlfa } = await scenario();
+  const persona = (await call(db, 'POST', '/api/manager/employees', { token: mgrAlfa, body: { name: '=HYPERLINK("http://male")', locker: '77' } })).body;
+  const token = await staffToken(db, alfa.codeStaff, persona.id);
+  const { mappa } = await piattiDelGiorno(db, token, 1);
+  await ordina(db, token, 1, [mappa.A]);
+  const csv = await call(db, 'GET', `/api/admin/report/delivery?week=${WEEK}&format=csv`, { token: admin });
+  assert.ok(String(csv.body).includes("'=HYPERLINK"), 'apostrofo davanti alla formula');
+  assert.ok(!/;=HYPERLINK/.test(String(csv.body)), 'nessuna cella che inizia con =');
 });

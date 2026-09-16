@@ -2,6 +2,8 @@
 
 import { currentWeek, shiftWeek, weekLabel, dayLabel, GIORNI_BREVI } from './shared/week.js';
 import { simulaAggiunta } from './shared/regole.js';
+import { firstOpenWeek, isLocked, deadlineLabel, GIORNI_SETTIMANA } from './shared/scadenza.js';
+import { leggiGriglia, leggiPersone } from './shared/importa.js';
 
 const DAYS = [1, 2, 3, 4, 5];
 const TOKEN_KEY = 'mensa.token';
@@ -14,6 +16,7 @@ const store = {
   week: currentWeek(),
   tab: '',
   appName: '',
+  deadline: null,
   companyId: null,
 };
 
@@ -187,6 +190,8 @@ async function boot() {
     store.name = me.name;
     store.employee = me.employee || null;
     store.companyId = me.companyId || null;
+    store.deadline = me.deadline || null;
+    if (store.role === 'staff') store.week = firstOpenWeek(currentWeek(), store.deadline, shiftWeek);
     renderTopbar();
     await routeByRole();
   } catch {
@@ -204,6 +209,7 @@ function viewSetup() {
   setSubmitbar();
   const nome = h('input', { class: 'field', id: 'setup-nome', placeholder: 'Trattoria Da Noi', autocomplete: 'off' });
   const codice = h('input', { class: 'field code-input', id: 'setup-codice', maxlength: '12', autocomplete: 'off' });
+  const installazione = h('input', { class: 'field', id: 'setup-install', autocomplete: 'off', placeholder: 'Solo se è stato impostato SETUP_CODE' });
   paint(h('div', { class: 'login' },
     h('img', { class: 'logo-img', src: '/icona.svg', alt: '', width: '64', height: '64' }),
     h('h1', { text: 'Primo avvio' }),
@@ -211,11 +217,12 @@ function viewSetup() {
     h('div', { class: 'stack' },
       h('div', {}, h('label', { for: 'setup-nome', text: 'Nome del ristorante' }), nome),
       h('div', {}, h('label', { for: 'setup-codice', text: 'Codice del ristorante (almeno 6 caratteri)' }), codice),
+      h('div', {}, h('label', { for: 'setup-install', text: 'Codice di installazione' }), installazione),
       h('button', {
         class: 'btn btn-primary btn-block',
         text: 'Crea',
         onclick: () => guard(async () => {
-          const result = await api('/api/setup', { method: 'POST', body: { name: nome.value, code: codice.value } });
+          const result = await api('/api/setup', { method: 'POST', body: { name: nome.value, code: codice.value, setupCode: installazione.value } });
           toast(`Codice del ristorante: ${result.code}`);
           store.appName = result.name;
           await viewLogin(`Conserva il codice ${result.code}: serve per accedere.`);
@@ -249,7 +256,9 @@ async function viewLogin(message) {
     store.role = result.role;
     store.name = result.name;
     store.employee = null;
-    store.week = currentWeek();
+    store.deadline = result.deadline || null;
+    // Il dipendente ordina per la prossima settimana ancora aperta: è lì che deve atterrare.
+    store.week = result.role === 'staff' ? firstOpenWeek(currentWeek(), store.deadline, shiftWeek) : currentWeek();
     renderTopbar();
     await routeByRole();
   });
@@ -344,7 +353,15 @@ async function viewStaffOrder() {
   const dayNodes = new Map();
   const piattiDi = (day, courseId) => data.menu.filter((i) => i.day === day && i.courseId === courseId);
 
+  const chiusa = data.deadline.locked;
+
   const refreshBar = () => {
+    if (chiusa) {
+      setSubmitbar(
+        h('div', { class: 'state', text: `Ordini chiusi ${data.deadline.label}` }),
+        h('button', { class: 'btn btn-primary', text: 'Settimana chiusa', disabled: true }));
+      return;
+    }
     const dirty = serializeSelection(selection) !== baseline;
     const scelti = DAYS.filter((day) => selection[day].items.length > 0).length;
     const saltati = DAYS.filter((day) => selection[day].skip).length;
@@ -387,7 +404,7 @@ async function viewStaffOrder() {
     const card = h('section', { class: chosen.skip ? 'card day skipped' : 'card day' },
       h('div', { class: 'day-head' },
         h('h2', { text: dayLabel(store.week, day) }),
-        !chosen.skip && dayMenu.length
+        !chosen.skip && dayMenu.length && !chiusa
           ? h('span', {
               class: unico || chosen.items.length >= data.rules.maxDishes ? 'counter full' : 'counter',
               text: unico ? 'piatto unico' : `${chosen.items.length}/${data.rules.maxDishes} piatti`,
@@ -397,6 +414,7 @@ async function viewStaffOrder() {
           ? h('button', {
               class: 'skip-btn',
               'aria-pressed': chosen.skip ? 'true' : 'false',
+              disabled: chiusa,
               text: 'Non pranzo',
               onclick: () => {
                 chosen.skip = !chosen.skip;
@@ -407,7 +425,7 @@ async function viewStaffOrder() {
           : null));
 
     if (!dayMenu.length) {
-      card.append(h('p', { class: 'empty-menu', text: 'Menù non ancora pubblicato per questo giorno.' }));
+      card.append(h('p', { class: 'empty-menu', text: chiusa ? 'Nessun menù per questo giorno.' : 'Menù non ancora pubblicato per questo giorno.' }));
       return card;
     }
     if (chosen.skip) {
@@ -431,7 +449,7 @@ async function viewStaffOrder() {
             class: 'opt',
             type: 'button',
             'aria-pressed': selezionato ? 'true' : 'false',
-            disabled: !selezionato && esito === null,
+            disabled: chiusa || (!selezionato && esito === null),
             onclick: () => {
               const prossime = simulaAggiunta(chosen.items, item, data.rules, infoDi);
               if (prossime === null) return;
@@ -463,7 +481,12 @@ async function viewStaffOrder() {
       store.week = shiftWeek(store.week, delta);
       guard(viewStaffOrder);
     }),
-    data.menu.length ? null : h('div', { class: 'notice', style: 'margin-top:12px', text: 'Il menù di questa settimana non è ancora stato pubblicato.' }),
+    chiusa
+      ? h('div', { class: 'notice notice-lock', style: 'margin-top:12px' },
+          h('strong', { text: 'Settimana chiusa. ' }),
+          h('span', { text: `Gli ordini si potevano fare e correggere fino a ${data.deadline.label}. Qui vedi quello che avevi scelto.` }))
+      : h('p', { class: 'small muted center', style: 'margin:10px 0 0', text: `Puoi ordinare e correggere fino a ${data.deadline.label}.` }),
+    data.menu.length || chiusa ? null : h('div', { class: 'notice', style: 'margin-top:12px', text: 'Il menù di questa settimana non è ancora stato pubblicato.' }),
     days,
     h('div', { class: 'card', style: 'margin-top:16px' },
       h('p', { class: 'small muted', text: 'Puoi correggere quando vuoi: vale sempre l\u2019ultimo invio.' }),
@@ -569,7 +592,56 @@ async function managerPeople() {
         h('span', { class: 'muted small', text: `${data.employees.length} in elenco` })),
       h('p', { class: 'muted small', text: 'Il numero di armadietto ordina la lista di consegna: deve essere unico in azienda.' }),
       data.employees.length ? list : h('p', { class: 'muted', text: 'Nessuna persona inserita.' }),
-      h('button', { class: 'btn btn-primary btn-block', style: 'margin-top:14px', text: '+ Aggiungi persona', onclick: () => employeeDialog(null, managerPeople) })));
+      h('div', { class: 'row-wrap', style: 'margin-top:14px' },
+        h('button', { class: 'btn btn-primary grow', text: '+ Aggiungi persona', onclick: () => employeeDialog(null, managerPeople) }),
+        h('button', { class: 'btn', text: 'Incolla un elenco', onclick: () => bulkEmployeesDialog(managerPeople) }))));
+}
+
+/** Elenco incollato da Excel: anteprima di che cosa entra e che cosa no, poi si importa. */
+function bulkEmployeesDialog(onDone) {
+  const area = h('textarea', { class: 'field', rows: '8', spellcheck: 'false', placeholder: 'Mario Rossi\t12\nAnna Bianchi\t3\n...' });
+  const anteprima = h('div', { class: 'stack' });
+  const importa = h('button', { class: 'btn btn-small btn-primary', text: 'Importa', disabled: true });
+  let lettura = { persone: [] };
+
+  const aggiorna = () => {
+    lettura = leggiPersone(area.value);
+    anteprima.replaceChildren();
+    if (lettura.persone.length) {
+      anteprima.append(h('p', { class: 'small' }, h('strong', { text: `${lettura.persone.length} persone pronte: ` }),
+        h('span', { class: 'muted', text: lettura.persone.slice(0, 6).map((x) => `${x.name} (${x.locker})`).join(', ') + (lettura.persone.length > 6 ? '…' : '') })));
+    }
+    if (lettura.senzaArmadietto.length) {
+      anteprima.append(h('p', { class: 'small notice', text: `Senza armadietto, non importate: ${lettura.senzaArmadietto.join(', ')}` }));
+    }
+    if (lettura.doppioni.length) {
+      anteprima.append(h('p', { class: 'small muted', text: `Ripetute nel testo, prese una volta: ${lettura.doppioni.join(', ')}` }));
+    }
+    importa.disabled = !lettura.persone.length;
+    importa.textContent = lettura.persone.length ? `Importa ${lettura.persone.length}` : 'Importa';
+  };
+  area.addEventListener('input', aggiorna);
+
+  const box = dialog('Incolla un elenco',
+    [
+      h('p', { class: 'small muted', text: 'Una persona per riga, con nome e numero di armadietto: come esce da Excel va bene. Chi è già in elenco viene saltato.' }),
+      area,
+      anteprima,
+    ],
+    [
+      h('button', { class: 'btn btn-small', text: 'Annulla', onclick: () => box.close() }),
+      importa,
+    ]);
+  importa.addEventListener('click', () => guard(async () => {
+    const esito = await api('/api/manager/employees/bulk', { method: 'POST', body: { people: lettura.persone } });
+    box.close();
+    const parti = [`${esito.inserted} inserite`];
+    if (esito.skipped.length) parti.push(`${esito.skipped.length} già presenti`);
+    if (esito.conflicts.length) parti.push(`${esito.conflicts.length} con armadietto occupato: ${esito.conflicts.map((c) => `${c.name} (${c.locker} è di ${c.by})`).join(', ')}`);
+    toast(parti.join(' · '), esito.conflicts.length > 0);
+    await onDone();
+  }));
+  area.focus();
 }
 
 async function managerStatus() {
@@ -593,6 +665,8 @@ async function managerStatus() {
       h('div', { class: 'card-head' },
         h('h2', { text: 'Stato ordini' }),
         h('span', { class: 'muted small', text: `${inviati} su ${data.employees.length} hanno inviato` })),
+      h('p', { class: data.deadline.locked ? 'small notice notice-lock' : 'small muted', style: 'margin-bottom:12px',
+        text: data.deadline.locked ? `Settimana chiusa ${data.deadline.label}: gli ordini sono definitivi.` : `Aperta fino a ${data.deadline.label}.` }),
       data.employees.length ? h('div', { class: 'list' }, rows) : h('p', { class: 'muted', text: 'Nessuna persona in elenco.' })));
 }
 
@@ -613,7 +687,7 @@ const ADMIN_TABS = [
   { key: 'menu', label: 'Menù' },
   { key: 'cucina', label: 'Cucina' },
   { key: 'consegne', label: 'Consegne' },
-  { key: 'dati', label: 'Dati' },
+  { key: 'dati', label: 'Impostazioni' },
 ];
 
 function viewAdmin(tab = store.tab || 'aziende') {
@@ -862,6 +936,7 @@ async function adminMenu() {
     h('div', { class: 'card' },
       h('div', { class: 'stack' },
         h('button', { class: 'btn btn-primary btn-block', text: 'Salva menù', onclick: () => salva() }),
+        h('button', { class: 'btn btn-block', text: 'Incolla da Excel', onclick: () => pasteMenuDialog(righe, celle) }),
         h('button', {
           class: 'btn btn-block',
           text: 'Copia questo menù a tutte le aziende',
@@ -886,6 +961,56 @@ async function adminMenu() {
             await adminMenu();
           }),
         }))));
+}
+
+/**
+ * Il ristorante seleziona la griglia nel suo foglio, la copia e la incolla qui:
+ * anteprima di che cosa è stato riconosciuto, poi si riempiono le caselle.
+ * Il salvataggio resta un passo a parte, così si può ancora correggere.
+ */
+function pasteMenuDialog(righe, celle) {
+  const slots = righe.map((r) => ({ id: r.id, code: r.code, courseName: r.courseName }));
+  const area = h('textarea', { class: 'field', rows: '10', spellcheck: 'false', placeholder: 'A\tPrimi\tPasta e ceci\tPasta alla carbonara\t...' });
+  const anteprima = h('div', { class: 'stack' });
+  const applica = h('button', { class: 'btn btn-small btn-primary', text: 'Riempi la griglia', disabled: true });
+  let lettura = { righe: [] };
+
+  const aggiorna = () => {
+    lettura = leggiGriglia(area.value, slots);
+    anteprima.replaceChildren();
+    if (lettura.righe.length) {
+      anteprima.append(h('div', { class: 'grid-scroll' }, h('table', { class: 'menu-grid anteprima' },
+        h('thead', {}, h('tr', {}, h('th', { text: '' }), DAYS.map((d) => h('th', { text: GIORNI_BREVI[d - 1] })))),
+        h('tbody', {}, lettura.righe.map((r) => h('tr', {},
+          h('th', {}, h('span', { class: 'slot-code', text: r.code })),
+          r.giorni.map((g) => h('td', { class: g ? '' : 'muted', text: g || '\u2014' }))))))));
+      const pizze = lettura.righe.flatMap((r) => r.giorni.filter((g) => /pizza/i.test(g)));
+      if (pizze.length) anteprima.append(h('p', { class: 'small muted', text: `Contrassegnate come piatto unico: ${pizze.join(', ')}` }));
+    }
+    if (lettura.mancanti.length) anteprima.append(h('p', { class: 'small muted', text: `Lettere non trovate nel testo: ${lettura.mancanti.join(' ')} (le caselle restano come sono).` }));
+    if (lettura.ignorate.length) anteprima.append(h('p', { class: 'small muted', text: `Righe ignorate: ${lettura.ignorate.length}` }));
+    applica.disabled = !lettura.righe.length;
+  };
+  area.addEventListener('input', aggiorna);
+
+  const box = dialog('Incolla da Excel',
+    [h('p', { class: 'small muted', text: 'Seleziona nel foglio le righe delle lettere con i cinque giorni, copia e incolla qui. Va bene anche con la colonna della portata e con l\u2019intestazione.' }), area, anteprima],
+    [h('button', { class: 'btn btn-small', text: 'Annulla', onclick: () => box.close() }), applica]);
+  box.classList.add('wide'); // l'anteprima ha cinque colonne: serve spazio
+  applica.addEventListener('click', () => {
+    for (const r of lettura.righe) {
+      r.giorni.forEach((nome, i) => {
+        const cella = celle.get(`${r.slotId}:${i + 1}`);
+        if (!cella) return;
+        cella.campo.value = nome;
+        cella.unico.setAttribute('aria-pressed', /pizza/i.test(nome) ? 'true' : 'false');
+        cella.campo.dispatchEvent(new Event('input'));
+      });
+    }
+    box.close();
+    toast('Griglia riempita: controlla e poi salva');
+  });
+  area.focus();
 }
 
 async function adminKitchen() {
@@ -960,10 +1085,55 @@ async function adminDelivery() {
     deliveryNodes(report, true));
 }
 
-function adminData() {
+async function adminData() {
+  const impostazioni = await api('/api/admin/settings');
+  const nome = h('input', { class: 'field', value: impostazioni.name, autocomplete: 'off' });
+  const giorno = h('select', { class: 'field', style: 'width:auto' },
+    GIORNI_SETTIMANA.map((g, i) => h('option', { value: i + 1, selected: impostazioni.deadline.day === i + 1 }, g)));
+  const ora = h('input', { class: 'field', style: 'width:120px', type: 'time', value: impostazioni.deadline.time });
+  const esempio = h('p', { class: 'small muted', text: `Esempio: la prossima settimana si chiude ${impostazioni.example}.` });
+  const attuale = h('input', { class: 'field', type: 'password', autocomplete: 'current-password', placeholder: 'Codice attuale' });
+  const nuovo = h('input', { class: 'field', type: 'password', autocomplete: 'new-password', placeholder: 'Nuovo codice (almeno 6 caratteri)' });
   const settimane = h('input', { class: 'field', style: 'width:110px', type: 'number', min: '1', max: '104', value: '12' });
   const anche = h('input', { type: 'checkbox', id: 'anche-menu', style: 'width:22px;height:22px' });
   paint(adminHeader(),
+    h('div', { class: 'card' },
+      h('h2', { text: 'Scadenza degli ordini' }),
+      h('p', { class: 'small muted', text: 'Le aziende ordinano e correggono la settimana successiva fino a questo momento della settimana precedente. Poi tutto si blocca e non si modifica più.' }),
+      h('div', { class: 'row-wrap', style: 'margin-top:10px' }, h('span', { text: 'Ogni' }), giorno, h('span', { text: 'alle' }), ora),
+      esempio,
+      h('label', { text: 'Nome del ristorante' }), nome,
+      h('button', {
+        class: 'btn btn-primary btn-block',
+        style: 'margin-top:12px',
+        text: 'Salva impostazioni',
+        onclick: () => guard(async () => {
+          const esito = await api('/api/admin/settings', {
+            method: 'PUT',
+            body: { name: nome.value, deadline: { day: Number(giorno.value), time: ora.value, timezone: impostazioni.deadline.timezone } },
+          });
+          store.appName = esito.name;
+          store.deadline = esito.deadline;
+          toast('Impostazioni salvate');
+          await adminData();
+        }),
+      })),
+    h('div', { class: 'card' },
+      h('h2', { text: 'Codice del ristorante' }),
+      h('p', { class: 'small muted', text: 'Cambiandolo, chi è entrato con quello vecchio deve rientrare. Nel database ne resta solo un\u2019impronta.' }),
+      h('div', { class: 'stack', style: 'margin-top:10px' }, attuale, nuovo,
+        h('button', {
+          class: 'btn btn-block',
+          text: 'Cambia codice',
+          onclick: () => guard(async () => {
+            const esito = await api('/api/admin/code', { method: 'POST', body: { current: attuale.value, next: nuovo.value } });
+            store.token = esito.token;
+            localStorage.setItem(TOKEN_KEY, esito.token);
+            attuale.value = '';
+            nuovo.value = '';
+            toast('Codice cambiato');
+          }),
+        }))),
     h('div', { class: 'card' },
       h('h2', { text: 'Conservazione dei dati' }),
       h('p', { class: 'small muted', text: 'Le scelte alimentari possono rivelare informazioni personali delicate. Gli ordini più vecchi del periodo impostato vengono cancellati automaticamente; qui puoi anticipare la pulizia.' }),

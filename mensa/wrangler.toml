@@ -13,6 +13,10 @@ binding = "DB"
 database_name = "mensa"
 database_id = "da-sostituire-dopo-wrangler-d1-create-mensa"
 
+# Segreti, da impostare con `wrangler secret put <NOME>` (mai in questo file):
+#   SESSION_SECRET  firma delle sessioni (una stringa casuale lunga)
+#   SETUP_CODE      richiesto dal primo avvio: senza, chiunque apra l'indirizzo
+#                   prima di voi potrebbe configurare il ristorante al posto vostro
 [vars]
 RETENTION_WEEKS = "12"
 

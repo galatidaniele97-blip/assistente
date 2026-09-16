@@ -11,7 +11,10 @@ import {
   clientIp,
   checkLoginRate,
   recordFailedLogin,
+  hashCode,
+  verifyCode,
 } from './auth.js';
+import { normalizeSettings, deadlineFor, isLocked, deadlineLabel } from '../public/shared/scadenza.js';
 import { isValidWeek, currentWeek, shiftWeek, GIORNI, dayLabel, weekLabel } from '../public/shared/week.js';
 import { verificaGiorno } from '../public/shared/regole.js';
 
@@ -27,6 +30,19 @@ async function companyOf(db, session) {
   const company = await db.first('SELECT id, name FROM companies WHERE id = ?', [session.c]);
   if (!company) throw new HttpError(401, 'Azienda non più disponibile. Contatta il ristorante.');
   return company;
+}
+
+/** Le impostazioni del ristorante: nome e scadenza di ordinazione. */
+async function settingsOf(db) {
+  const row = await db.first(
+    'SELECT name, deadline_day AS day, deadline_time AS time, timezone FROM restaurant WHERE id = 1'
+  );
+  return { name: row?.name ?? 'Ristorante', deadline: normalizeSettings(row ?? {}) };
+}
+
+/** Stato della scadenza per una settimana: quando scade, se è già chiusa, come dirlo. */
+function deadlineInfo(week, deadline) {
+  return { at: deadlineFor(week, deadline), locked: isLocked(week, deadline), label: deadlineLabel(week, deadline) };
 }
 
 async function coursesOf(db, companyId) {
@@ -78,21 +94,27 @@ async function login(request, env, db) {
   if (code.length < 4) throw bad('Codice troppo corto.');
   await checkLoginRate(db, ip, code);
 
-  const restaurant = await db.first('SELECT id, name, code FROM restaurant WHERE id = 1');
-  if (restaurant && normalizeCode(restaurant.code) === code) {
-    return json({ token: await issueToken(env.SESSION_SECRET, { r: 'admin' }), role: 'admin', name: restaurant.name });
+  const restaurant = await db.first('SELECT id, name, code_hash, token_version AS v FROM restaurant WHERE id = 1');
+  if (restaurant && (await verifyCode(code, restaurant.code_hash))) {
+    return json({
+      token: await issueToken(env.SESSION_SECRET, { r: 'admin', v: restaurant.v }),
+      role: 'admin',
+      name: restaurant.name,
+      deadline: (await settingsOf(db)).deadline,
+    });
   }
 
   const company = await db.first(
-    'SELECT id, name, code_staff, code_manager FROM companies WHERE code_manager = ? OR code_staff = ?',
+    'SELECT id, name, code_staff, code_manager, token_version AS v FROM companies WHERE code_manager = ? OR code_staff = ?',
     [code, code]
   );
   if (company) {
     const role = company.code_manager === code ? 'manager' : 'staff';
     return json({
-      token: await issueToken(env.SESSION_SECRET, { r: role, c: company.id }),
+      token: await issueToken(env.SESSION_SECRET, { r: role, c: company.id, v: company.v }),
       role,
       name: company.name,
+      deadline: (await settingsOf(db)).deadline,
     });
   }
 
@@ -101,10 +123,10 @@ async function login(request, env, db) {
 }
 
 async function me(request, env, db) {
-  const session = await requireSession(request, env, ['admin', 'manager', 'staff']);
+  const session = await requireSession(request, env, ['admin', 'manager', 'staff'], db);
+  const settings = await settingsOf(db);
   if (session.r === 'admin') {
-    const restaurant = await db.first('SELECT name FROM restaurant WHERE id = 1');
-    return json({ role: 'admin', name: restaurant?.name ?? 'Ristorante' });
+    return json({ role: 'admin', name: settings.name, deadline: settings.deadline });
   }
   const company = await companyOf(db, session);
   let employee = null;
@@ -114,13 +136,13 @@ async function me(request, env, db) {
       company.id,
     ]);
   }
-  return json({ role: session.r, name: company.name, companyId: company.id, employee });
+  return json({ role: session.r, name: company.name, companyId: company.id, employee, deadline: settings.deadline });
 }
 
 // ── Dipendente ────────────────────────────────────────────────────────────────
 
 async function staffEmployees(request, env, db) {
-  const session = await requireSession(request, env, ['staff']);
+  const session = await requireSession(request, env, ['staff'], db);
   const company = await companyOf(db, session);
   const employees = await db.all(
     'SELECT id, name, locker FROM employees WHERE company_id = ? AND active = 1 ORDER BY name COLLATE NOCASE',
@@ -131,7 +153,7 @@ async function staffEmployees(request, env, db) {
 
 /** Il nome non si digita: si sceglie dall'elenco e il token viene legato a quella persona. */
 async function staffIdentify(request, env, db) {
-  const session = await requireSession(request, env, ['staff']);
+  const session = await requireSession(request, env, ['staff'], db);
   const company = await companyOf(db, session);
   const body = await readJson(request);
   const employee = await db.first(
@@ -140,13 +162,13 @@ async function staffIdentify(request, env, db) {
   );
   if (!employee) throw bad('Nominativo non disponibile.');
   return json({
-    token: await issueToken(env.SESSION_SECRET, { r: 'staff', c: company.id, e: employee.id }),
+    token: await issueToken(env.SESSION_SECRET, { r: 'staff', c: company.id, e: employee.id, v: session.v }),
     employee,
   });
 }
 
 async function requireEmployee(request, env, db) {
-  const session = await requireSession(request, env, ['staff']);
+  const session = await requireSession(request, env, ['staff'], db);
   const company = await companyOf(db, session);
   if (!session.e) throw new HttpError(403, 'Scegli prima il tuo nominativo.');
   const employee = await db.first(
@@ -176,6 +198,7 @@ async function staffWeek(request, env, db, url) {
       (days[row.day] ??= { skip: false, items: [] }).items.push(row.itemId);
     }
   }
+  const { deadline } = await settingsOf(db);
   return json({
     week: w,
     company: company.name,
@@ -184,6 +207,7 @@ async function staffWeek(request, env, db, url) {
     rules,
     menu: items,
     order: order ? { updatedAt: order.updatedAt, days } : null,
+    deadline: deadlineInfo(w, deadline),
   });
 }
 
@@ -191,6 +215,12 @@ async function staffOrder(request, env, db) {
   const { company, employee } = await requireEmployee(request, env, db);
   const body = await readJson(request);
   const w = week(body.week);
+
+  // Chiusa la scadenza, l'ordine della settimana è definitivo: la cucina ci conta.
+  const { deadline } = await settingsOf(db);
+  if (isLocked(w, deadline)) {
+    throw new HttpError(423, `Ordini chiusi ${deadlineLabel(w, deadline)}: questa settimana non si modifica più.`);
+  }
 
   const rules = await rulesOf(db, company.id);
   const allowed = new Map();
@@ -257,7 +287,7 @@ async function staffDeleteOrders(request, env, db) {
 // ── Referente azienda ─────────────────────────────────────────────────────────
 
 async function managerEmployees(request, env, db) {
-  const session = await requireSession(request, env, ['manager']);
+  const session = await requireSession(request, env, ['manager'], db);
   const company = await companyOf(db, session);
   const employees = await db.all(
     'SELECT id, name, locker, active FROM employees WHERE company_id = ? ORDER BY name COLLATE NOCASE',
@@ -268,7 +298,7 @@ async function managerEmployees(request, env, db) {
 }
 
 async function managerCreateEmployee(request, env, db) {
-  const session = await requireSession(request, env, ['manager']);
+  const session = await requireSession(request, env, ['manager'], db);
   const company = await companyOf(db, session);
   const body = await readJson(request);
   const name = str(body.name, { field: 'nome', max: 80 });
@@ -286,8 +316,50 @@ async function managerCreateEmployee(request, env, db) {
   return json({ id: result.lastId, name, locker, active: 1 }, 201);
 }
 
+/**
+ * Elenco incollato dal referente (nome + armadietto per riga). Chi c'è già
+ * viene saltato, un armadietto occupato blocca solo quella riga: il resto entra.
+ */
+async function managerBulkEmployees(request, env, db) {
+  const session = await requireSession(request, env, ['manager'], db);
+  const company = await companyOf(db, session);
+  const body = await readJson(request);
+  if (!Array.isArray(body.people) || !body.people.length) throw bad('Nessuna persona da importare.');
+  if (body.people.length > 500) throw bad('Massimo 500 persone per importazione.');
+
+  const existing = await db.all('SELECT name, locker FROM employees WHERE company_id = ? AND active = 1', [company.id]);
+  const names = new Set(existing.map((e) => e.name.toLowerCase()));
+  const lockers = new Map(existing.map((e) => [e.locker.toLowerCase(), e.name]));
+  const inserted = [];
+  const skipped = [];
+  const conflicts = [];
+  const statements = [];
+  for (const raw of body.people) {
+    const name = str(raw?.name, { field: 'nome', max: 80 });
+    const locker = str(raw?.locker, { field: 'armadietto', max: 10 });
+    if (names.has(name.toLowerCase())) {
+      skipped.push(name);
+      continue;
+    }
+    const takenBy = lockers.get(locker.toLowerCase());
+    if (takenBy) {
+      conflicts.push({ name, locker, by: takenBy });
+      continue;
+    }
+    names.add(name.toLowerCase());
+    lockers.set(locker.toLowerCase(), name);
+    inserted.push(name);
+    statements.push({
+      sql: 'INSERT INTO employees (company_id, name, locker) VALUES (?, ?, ?)',
+      params: [company.id, name, locker],
+    });
+  }
+  await db.batch(statements);
+  return json({ inserted: inserted.length, skipped, conflicts }, statements.length ? 201 : 200);
+}
+
 async function managerUpdateEmployee(request, env, db, employeeId) {
-  const session = await requireSession(request, env, ['manager']);
+  const session = await requireSession(request, env, ['manager'], db);
   const company = await companyOf(db, session);
   const body = await readJson(request);
   const existing = await db.first('SELECT id FROM employees WHERE id = ? AND company_id = ?', [employeeId, company.id]);
@@ -306,7 +378,7 @@ async function managerUpdateEmployee(request, env, db, employeeId) {
 
 /** Cancellare una persona cancella anche i suoi ordini (art. 17 GDPR). */
 async function managerDeleteEmployee(request, env, db, employeeId) {
-  const session = await requireSession(request, env, ['manager']);
+  const session = await requireSession(request, env, ['manager'], db);
   const company = await companyOf(db, session);
   const result = await db.run('DELETE FROM employees WHERE id = ? AND company_id = ?', [employeeId, company.id]);
   if (!result.changes) throw new HttpError(404, 'Persona non trovata.');
@@ -314,7 +386,7 @@ async function managerDeleteEmployee(request, env, db, employeeId) {
 }
 
 async function managerWeek(request, env, db, url) {
-  const session = await requireSession(request, env, ['manager']);
+  const session = await requireSession(request, env, ['manager'], db);
   const company = await companyOf(db, session);
   const w = week(url.searchParams.get('week'));
   const employees = await db.all(
@@ -353,7 +425,8 @@ async function managerWeek(request, env, db, url) {
       };
     })
     .sort((a, b) => lockerSort(a.locker, b.locker));
-  return json({ week: w, company: company.name, employees: rows });
+  const { deadline } = await settingsOf(db);
+  return json({ week: w, company: company.name, employees: rows, deadline: deadlineInfo(w, deadline) });
 }
 
 // ── Ristorante: aziende e regole ──────────────────────────────────────────────
@@ -383,14 +456,13 @@ async function uniqueCode(db) {
   for (let i = 0; i < 20; i++) {
     const code = generateCode();
     const clash = await db.first('SELECT 1 AS x FROM companies WHERE code_staff = ? OR code_manager = ?', [code, code]);
-    const restaurant = await db.first('SELECT 1 AS x FROM restaurant WHERE code = ?', [code]);
-    if (!clash && !restaurant) return code;
+    if (!clash) return code;
   }
   throw new HttpError(500, 'Impossibile generare un codice. Riprova.');
 }
 
 async function adminCompanies(request, env, db) {
-  await requireSession(request, env, ['admin']);
+  await requireSession(request, env, ['admin'], db);
   const companies = await db.all(
     `SELECT c.id, c.name, c.code_staff AS codeStaff, c.code_manager AS codeManager, c.max_dishes AS maxDishes,
             (SELECT COUNT(*) FROM employees e WHERE e.company_id = c.id AND e.active = 1) AS employees
@@ -401,7 +473,7 @@ async function adminCompanies(request, env, db) {
 }
 
 async function adminCreateCompany(request, env, db) {
-  await requireSession(request, env, ['admin']);
+  await requireSession(request, env, ['admin'], db);
   const body = await readJson(request);
   const name = str(body.name, { field: 'nome azienda', max: 80 });
   const maxDishes = body.maxDishes === undefined ? DEFAULT_MAX_DISHES : int(body.maxDishes, { field: 'piatti al giorno', min: 1, max: 9 });
@@ -431,7 +503,7 @@ async function adminCreateCompany(request, env, db) {
 }
 
 async function adminUpdateCompany(request, env, db, companyId) {
-  await requireSession(request, env, ['admin']);
+  await requireSession(request, env, ['admin'], db);
   const body = await readJson(request);
   const existing = await db.first('SELECT id FROM companies WHERE id = ?', [companyId]);
   if (!existing) throw new HttpError(404, 'Azienda non trovata.');
@@ -441,17 +513,20 @@ async function adminUpdateCompany(request, env, db, companyId) {
 }
 
 async function adminRegenCodes(request, env, db, companyId) {
-  await requireSession(request, env, ['admin']);
+  await requireSession(request, env, ['admin'], db);
   const existing = await db.first('SELECT id FROM companies WHERE id = ?', [companyId]);
   if (!existing) throw new HttpError(404, 'Azienda non trovata.');
   const codeStaff = await uniqueCode(db);
   const codeManager = await uniqueCode(db);
-  await db.run('UPDATE companies SET code_staff = ?, code_manager = ? WHERE id = ?', [codeStaff, codeManager, companyId]);
+  await db.run(
+    'UPDATE companies SET code_staff = ?, code_manager = ?, token_version = token_version + 1 WHERE id = ?',
+    [codeStaff, codeManager, companyId]
+  );
   return json({ id: companyId, codeStaff, codeManager });
 }
 
 async function adminDeleteCompany(request, env, db, companyId) {
-  await requireSession(request, env, ['admin']);
+  await requireSession(request, env, ['admin'], db);
   const result = await db.run('DELETE FROM companies WHERE id = ?', [companyId]);
   if (!result.changes) throw new HttpError(404, 'Azienda non trovata.');
   return json({ ok: true });
@@ -459,7 +534,7 @@ async function adminDeleteCompany(request, env, db, companyId) {
 
 /** Salvataggio differenziale: portate e lettere invariate mantengono l'id, così gli ordini restano validi. */
 async function adminSaveCourses(request, env, db, companyId) {
-  await requireSession(request, env, ['admin']);
+  await requireSession(request, env, ['admin'], db);
   const company = await db.first('SELECT id FROM companies WHERE id = ?', [companyId]);
   if (!company) throw new HttpError(404, 'Azienda non trovata.');
   const body = await readJson(request);
@@ -545,7 +620,7 @@ async function adminSaveCourses(request, env, db, companyId) {
 // ── Ristorante: menù ──────────────────────────────────────────────────────────
 
 async function adminMenu(request, env, db, url) {
-  await requireSession(request, env, ['admin']);
+  await requireSession(request, env, ['admin'], db);
   const companyId = id(url.searchParams.get('companyId'), 'companyId');
   const w = week(url.searchParams.get('week'));
   const company = await db.first('SELECT id, name, max_dishes AS maxDishes FROM companies WHERE id = ?', [companyId]);
@@ -594,7 +669,7 @@ async function saveMenuItems(db, companyId, w, incoming) {
 }
 
 async function adminSaveMenu(request, env, db) {
-  await requireSession(request, env, ['admin']);
+  await requireSession(request, env, ['admin'], db);
   const body = await readJson(request);
   const companyId = id(body.companyId, 'companyId');
   const w = week(body.week);
@@ -619,7 +694,7 @@ async function adminSaveMenu(request, env, db) {
 
 /** "Copia a tutte": i piatti vengono riassegnati per LETTERA, perché ogni azienda ha la sua griglia. */
 async function adminCopyMenu(request, env, db) {
-  await requireSession(request, env, ['admin']);
+  await requireSession(request, env, ['admin'], db);
   const body = await readJson(request);
   const fromCompanyId = id(body.fromCompanyId, 'fromCompanyId');
   const w = week(body.week);
@@ -656,7 +731,7 @@ async function adminCopyMenu(request, env, db) {
 }
 
 async function adminImportWeek(request, env, db) {
-  await requireSession(request, env, ['admin']);
+  await requireSession(request, env, ['admin'], db);
   const body = await readJson(request);
   const companyId = id(body.companyId, 'companyId');
   const fromWeek = week(body.fromWeek);
@@ -797,7 +872,7 @@ function deliveryCsv(report) {
 // ── Ristorante: conservazione dei dati ────────────────────────────────────────
 
 async function adminPurge(request, env, db) {
-  await requireSession(request, env, ['admin']);
+  await requireSession(request, env, ['admin'], db);
   const body = await readJson(request);
   const before = week(body.beforeWeek);
   const orders = await db.run('DELETE FROM orders WHERE week < ?', [before]);
@@ -819,11 +894,59 @@ async function setup(request, env, db) {
   const existing = await db.first('SELECT id FROM restaurant WHERE id = 1');
   if (existing) throw new HttpError(409, 'Configurazione già effettuata.');
   const body = await readJson(request);
+  // Fra la messa in rete e il primo avvio la pagina è raggiungibile da chiunque:
+  // con SETUP_CODE impostato, solo chi lo conosce può fare la configurazione.
+  if (env.SETUP_CODE && normalizeCode(body.setupCode) !== normalizeCode(env.SETUP_CODE)) {
+    throw new HttpError(403, 'Codice di installazione mancante o errato.');
+  }
   const name = str(body.name, { field: 'nome ristorante', max: 80 });
   const code = normalizeCode(body.code) || generateCode(8);
   if (code.length < 6) throw bad('Il codice del ristorante deve avere almeno 6 caratteri.');
-  await db.run('INSERT INTO restaurant (id, name, code) VALUES (1, ?, ?)', [name, code]);
+  await db.run('INSERT INTO restaurant (id, name, code_hash) VALUES (1, ?, ?)', [name, await hashCode(code)]);
   return json({ ok: true, name, code }, 201);
+}
+
+// ── Ristorante: impostazioni ──────────────────────────────────────────────────
+
+async function adminSettings(request, env, db) {
+  await requireSession(request, env, ['admin'], db);
+  const settings = await settingsOf(db);
+  return json({ ...settings, example: deadlineLabel(shiftWeek(currentWeek(), 1), settings.deadline) });
+}
+
+async function adminSaveSettings(request, env, db) {
+  await requireSession(request, env, ['admin'], db);
+  const body = await readJson(request);
+  const name = str(body.name, { field: 'nome ristorante', max: 80 });
+  const deadline = normalizeSettings(body.deadline ?? {});
+  const [hour, minute] = deadline.time.split(':').map(Number);
+  if (hour > 23 || minute > 59) throw bad('Orario di scadenza non valido.');
+  try {
+    new Intl.DateTimeFormat('it-IT', { timeZone: deadline.timezone });
+  } catch {
+    throw bad('Fuso orario non riconosciuto.');
+  }
+  await db.run('UPDATE restaurant SET name = ?, deadline_day = ?, deadline_time = ?, timezone = ? WHERE id = 1', [
+    name,
+    deadline.day,
+    deadline.time,
+    deadline.timezone,
+  ]);
+  return json({ ok: true, ...(await settingsOf(db)) });
+}
+
+/** Cambio del codice del ristorante: serve quello attuale, e le altre sessioni decadono. */
+async function adminChangeCode(request, env, db) {
+  await requireSession(request, env, ['admin'], db);
+  const body = await readJson(request);
+  const restaurant = await db.first('SELECT code_hash, token_version AS v FROM restaurant WHERE id = 1');
+  if (!(await verifyCode(normalizeCode(body.current), restaurant.code_hash))) {
+    throw new HttpError(403, 'Il codice attuale non è corretto.');
+  }
+  const next = normalizeCode(body.next);
+  if (next.length < 6) throw bad('Il nuovo codice deve avere almeno 6 caratteri.');
+  await db.run('UPDATE restaurant SET code_hash = ?, token_version = token_version + 1 WHERE id = 1', [await hashCode(next)]);
+  return json({ ok: true, token: await issueToken(env.SESSION_SECRET, { r: 'admin', v: restaurant.v + 1 }) });
 }
 
 // ── Router ────────────────────────────────────────────────────────────────────
@@ -854,12 +977,13 @@ export async function handleApi(request, env, db) {
 
     if (a === 'manager') {
       if (method === 'GET' && b === 'employees') return await managerEmployees(request, env, db);
-      if (method === 'POST' && b === 'employees') return await managerCreateEmployee(request, env, db);
+      if (method === 'POST' && b === 'employees' && !c) return await managerCreateEmployee(request, env, db);
+      if (method === 'POST' && b === 'employees' && c === 'bulk') return await managerBulkEmployees(request, env, db);
       if (method === 'PUT' && b === 'employees' && c) return await managerUpdateEmployee(request, env, db, id(c));
       if (method === 'DELETE' && b === 'employees' && c) return await managerDeleteEmployee(request, env, db, id(c));
       if (method === 'GET' && b === 'week') return await managerWeek(request, env, db, url);
       if (method === 'GET' && b === 'delivery') {
-        const session = await requireSession(request, env, ['manager']);
+        const session = await requireSession(request, env, ['manager'], db);
         const company = await companyOf(db, session);
         const report = await reportDelivery(db, week(url.searchParams.get('week')), company.id);
         return url.searchParams.get('format') === 'csv' ? deliveryCsv(report) : json(report);
@@ -878,7 +1002,7 @@ export async function handleApi(request, env, db) {
       if (method === 'POST' && b === 'menu' && c === 'copy') return await adminCopyMenu(request, env, db);
       if (method === 'POST' && b === 'menu' && c === 'import-week') return await adminImportWeek(request, env, db);
       if (method === 'GET' && b === 'report' && (c === 'kitchen' || c === 'delivery')) {
-        await requireSession(request, env, ['admin']);
+        await requireSession(request, env, ['admin'], db);
         const w = week(url.searchParams.get('week'));
         const report = c === 'kitchen' ? await reportKitchen(db, w) : await reportDelivery(db, w);
         if (url.searchParams.get('format') === 'csv') {
@@ -887,6 +1011,9 @@ export async function handleApi(request, env, db) {
         return json(report);
       }
       if (method === 'POST' && b === 'purge') return await adminPurge(request, env, db);
+      if (method === 'GET' && b === 'settings') return await adminSettings(request, env, db);
+      if (method === 'PUT' && b === 'settings') return await adminSaveSettings(request, env, db);
+      if (method === 'POST' && b === 'code') return await adminChangeCode(request, env, db);
     }
 
     return json({ error: 'Risorsa non trovata.' }, 404);

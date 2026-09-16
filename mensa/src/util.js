@@ -18,7 +18,10 @@ export function json(data, status = 200, headers = {}) {
 
 export function csv(rows, filename) {
   const esc = (v) => {
-    const s = v === null || v === undefined ? '' : String(v);
+    let s = v === null || v === undefined ? '' : String(v);
+    // Un nome che inizia con = + - @ verrebbe eseguito come formula da Excel:
+    // si antepone un apostrofo, che Excel mostra come testo.
+    if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
     return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   // ';' come separatore e BOM: Excel italiano apre il file senza passaggi manuali.
@@ -56,9 +59,27 @@ export function id(value, field = 'id') {
   return n;
 }
 
+const MAX_BODY_BYTES = 256 * 1024;
+
+/**
+ * Legge il corpo JSON con due difese: un tetto alla dimensione (un corpo enorme
+ * non deve occupare il Worker) e il content-type obbligatorio (una pagina
+ * estranea non può inviare JSON "semplice" senza passare dal preflight CORS).
+ */
 export async function readJson(request) {
+  const type = request.headers.get('content-type') || '';
+  if (!type.toLowerCase().startsWith('application/json')) throw bad('Atteso un corpo JSON.');
+  const declared = Number(request.headers.get('content-length') || 0);
+  if (declared > MAX_BODY_BYTES) throw new HttpError(413, 'Richiesta troppo grande.');
+  let text;
   try {
-    const body = await request.json();
+    text = await request.text();
+  } catch {
+    throw bad('Corpo della richiesta non leggibile.');
+  }
+  if (text.length > MAX_BODY_BYTES) throw new HttpError(413, 'Richiesta troppo grande.');
+  try {
+    const body = JSON.parse(text);
     if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error();
     return body;
   } catch {
