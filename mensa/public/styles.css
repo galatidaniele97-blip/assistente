@@ -354,7 +354,7 @@ footer.legal { max-width: 720px; margin: 28px auto 0; padding: 0 16px; font-size
 @media print {
   .topbar, .tabs, .weekbar, .submitbar, .no-print, footer.legal { display: none !important; }
   body { background: #fff; font-size: 12px; }
-  .app { padding: 0; max-width: none; }
+  .app { padding: 0 2mm; max-width: none; }
   .card { border: 0; box-shadow: none; padding: 0; }
   .report-day { break-inside: avoid; }
 }

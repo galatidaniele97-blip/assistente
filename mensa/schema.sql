@@ -94,10 +94,11 @@ CREATE TABLE IF NOT EXISTS order_choices (
 );
 CREATE INDEX IF NOT EXISTS idx_choices_item ON order_choices(item_id);
 
--- Limitazione tentativi di accesso (pulita dal cron di retention)
+-- Limitazione tentativi di accesso (pulita dal cron di retention).
+-- La chiave è "ip|impronta del codice" oppure il solo "ip": vedi src/auth.js.
 CREATE TABLE IF NOT EXISTS login_attempts (
-  ip        TEXT NOT NULL,
+  key       TEXT NOT NULL,
   window_ts INTEGER NOT NULL,
   count     INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (ip, window_ts)
+  PRIMARY KEY (key, window_ts)
 );

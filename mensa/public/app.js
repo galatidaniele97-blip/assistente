@@ -706,7 +706,11 @@ async function adminCompanies() {
       h('div', { class: 'row-wrap', style: 'margin-bottom:10px' },
         h('span', { class: 'small muted', text: 'Codice dipendenti' }), h('span', { class: 'code-chip', text: company.codeStaff }),
         h('span', { class: 'small muted', text: 'Codice referente' }), h('span', { class: 'code-chip', text: company.codeManager })),
-      h('p', { class: 'small muted', text: company.courses.map((c) => `${c.name} (max ${c.max})`).join(' · ') || 'Nessuna portata configurata' }),
+      h('p', { class: 'small muted' },
+        h('strong', { text: `${company.maxDishes} piatti al giorno` }),
+        h('span', { text: company.courses.length
+          ? ' \u00b7 ' + company.courses.map((c) => `${c.name} ${c.slots.map((s) => s.code).join('')} (max ${c.max})`).join(' \u00b7 ')
+          : ' \u00b7 nessuna portata configurata' })),
       h('div', { class: 'row-wrap' },
         h('button', { class: 'btn btn-small', text: 'Regole', onclick: () => coursesDialog(company, adminCompanies) }),
         h('button', { class: 'btn btn-small', text: 'Rinomina', onclick: () => renameDialog(company) }),

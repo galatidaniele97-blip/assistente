@@ -69,7 +69,7 @@ Serve solo Node 22.5 o superiore (nessuna dipendenza da installare: il database 
 
 ```bash
 npm start           # http://localhost:8787
-npm test            # 19 test sulle regole di dominio
+npm test            # 21 test sulle regole di dominio
 ```
 
 Al primo avvio la pagina chiede nome del ristorante e codice di accesso: da lì si creano le aziende.
@@ -154,8 +154,12 @@ Le scelte alimentari possono rivelare dati sensibili (allergie, convinzioni reli
   sarebbero indistinguibili e chiunque potrebbe modificare l'anagrafica. I codici sono brevi e senza
   caratteri ambigui (niente `O`/`0`, `I`/`1`) perché vengono letti a voce e trascritti.
 - **Codici in chiaro nel database.** Il ristorante deve poterli rileggere per comunicarli. Sono
-  credenziali condivise e a bassa sensibilità, rigenerabili in un tocco; i tentativi di accesso sono
-  limitati a 25 ogni 15 minuti per indirizzo IP.
+  credenziali condivise e a bassa sensibilità, rigenerabili in un tocco.
+- **Il blocco dei tentativi conta per codice, non per indirizzo IP.** Un'azienda intera esce spesso da
+  un solo IP: contare per IP significherebbe che una persona che sbaglia il codice blocca i colleghi.
+  Si fermano quindi i tentativi ripetuti sullo stesso codice (10 ogni 15 minuti), con un tetto per IP
+  molto più alto (200) che ferma solo un attacco a forza bruta. Nella tabella dei tentativi finisce
+  un'impronta del codice, non il codice.
 - **"Copia a tutte" allinea per lettera.** Aziende con contratti diversi hanno griglie diverse: i piatti
   delle lettere che l'azienda di destinazione non ha vengono ignorati, e l'operazione dice quali, invece
   di finire nella riga sbagliata.

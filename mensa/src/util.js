@@ -22,7 +22,9 @@ export function csv(rows, filename) {
     return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   // ';' come separatore e BOM: Excel italiano apre il file senza passaggi manuali.
-  const body = '﻿' + rows.map((r) => r.map(esc).join(';')).join('\r\n');
+  // Il BOM va scritto come codice: un U+FEFF letterale nel sorgente viene perso.
+  const BOM = String.fromCharCode(0xfeff);
+  const body = BOM + rows.map((r) => r.map(esc).join(';')).join('\r\n');
   return new Response(body, {
     headers: {
       'content-type': 'text/csv; charset=utf-8',

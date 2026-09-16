@@ -79,8 +79,14 @@ export function generateCode(length = 6) {
 }
 
 // ── Limitazione dei tentativi di accesso ──────────────────────────────────────
+// Un'intera azienda esce spesso da un solo indirizzo IP: contare soltanto per IP
+// significherebbe che una persona che sbaglia il codice blocca tutti i colleghi.
+// Si contano quindi i tentativi sullo stesso codice (poche prove ammesse) e in
+// parallelo quelli complessivi dall'IP, con un tetto molto più alto che ferma
+// solo un attacco a forza bruta.
 const WINDOW_SECONDS = 900;
-const MAX_ATTEMPTS = 25;
+const MAX_PER_CODE = 10;
+const MAX_PER_IP = 200;
 
 export function clientIp(request) {
   return (
@@ -90,19 +96,37 @@ export function clientIp(request) {
   );
 }
 
-export async function checkLoginRate(db, ip) {
+/** Impronta del codice: nella tabella dei tentativi non finisce il codice in chiaro. */
+async function codeFingerprint(code) {
+  const digest = await crypto.subtle.digest('SHA-256', enc.encode(code));
+  return [...new Uint8Array(digest).slice(0, 8)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function attemptKeys(ip, code) {
+  return [`${ip}|${await codeFingerprint(code)}`, ip];
+}
+
+async function countOf(db, key, window) {
+  const row = await db.first('SELECT count FROM login_attempts WHERE key = ? AND window_ts = ?', [key, window]);
+  return row?.count ?? 0;
+}
+
+export async function checkLoginRate(db, ip, code) {
   const window = Math.floor(Date.now() / 1000 / WINDOW_SECONDS);
-  const row = await db.first('SELECT count FROM login_attempts WHERE ip = ? AND window_ts = ?', [ip, window]);
-  if (row && row.count >= MAX_ATTEMPTS) {
-    throw new HttpError(429, 'Troppi tentativi. Riprova tra qualche minuto.');
+  const [perCode, perIp] = await attemptKeys(ip, code);
+  if ((await countOf(db, perCode, window)) >= MAX_PER_CODE || (await countOf(db, perIp, window)) >= MAX_PER_IP) {
+    throw new HttpError(429, 'Troppi tentativi con questo codice. Riprova tra qualche minuto.');
   }
 }
 
-export async function recordFailedLogin(db, ip) {
+export async function recordFailedLogin(db, ip, code) {
   const window = Math.floor(Date.now() / 1000 / WINDOW_SECONDS);
-  await db.run(
-    `INSERT INTO login_attempts (ip, window_ts, count) VALUES (?, ?, 1)
-     ON CONFLICT(ip, window_ts) DO UPDATE SET count = count + 1`,
-    [ip, window]
+  const keys = await attemptKeys(ip, code);
+  await db.batch(
+    keys.map((key) => ({
+      sql: `INSERT INTO login_attempts (key, window_ts, count) VALUES (?, ?, 1)
+            ON CONFLICT(key, window_ts) DO UPDATE SET count = count + 1`,
+      params: [key, window],
+    }))
   );
 }

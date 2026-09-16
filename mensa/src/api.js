@@ -73,10 +73,10 @@ function menuOf(db, companyId, w) {
 
 async function login(request, env, db) {
   const ip = clientIp(request);
-  await checkLoginRate(db, ip);
   const body = await readJson(request);
   const code = normalizeCode(body.code);
   if (code.length < 4) throw bad('Codice troppo corto.');
+  await checkLoginRate(db, ip, code);
 
   const restaurant = await db.first('SELECT id, name, code FROM restaurant WHERE id = 1');
   if (restaurant && normalizeCode(restaurant.code) === code) {
@@ -96,7 +96,7 @@ async function login(request, env, db) {
     });
   }
 
-  await recordFailedLogin(db, ip);
+  await recordFailedLogin(db, ip, code);
   throw new HttpError(401, 'Codice non riconosciuto.');
 }
 
@@ -679,7 +679,7 @@ async function adminImportWeek(request, env, db) {
 async function reportKitchen(db, w) {
   const rows = await db.all(
     `SELECT mi.day AS day, c.name AS course, MIN(c.pos) AS pos, mi.name AS dish,
-            GROUP_CONCAT(DISTINCT s.code) AS codes, COUNT(*) AS qty
+            GROUP_CONCAT(DISTINCT s.code) AS codes, MIN(s.code) AS firstCode, COUNT(*) AS qty
        FROM order_choices oc
        JOIN orders o      ON o.id = oc.order_id
        JOIN menu_items mi ON mi.id = oc.item_id
@@ -687,7 +687,7 @@ async function reportKitchen(db, w) {
        JOIN courses c     ON c.id = s.course_id
       WHERE o.week = ?
       GROUP BY mi.day, c.name COLLATE NOCASE, mi.name COLLATE NOCASE
-      ORDER BY mi.day, pos, c.name COLLATE NOCASE, mi.name COLLATE NOCASE`,
+      ORDER BY mi.day, pos, c.name COLLATE NOCASE, firstCode, mi.name COLLATE NOCASE`,
     [w]
   );
   const meals = await db.all(

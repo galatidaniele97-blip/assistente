@@ -352,3 +352,38 @@ test('senza sessione valida non si legge nulla', async () => {
   assert.equal((await call(db, 'GET', `/api/staff/week?week=${WEEK}`, { token: 'falso.token' })).status, 401);
   assert.equal((await call(db, 'GET', '/api/manager/employees', { token: 'a.b' })).status, 401);
 });
+
+test('un collega che sbaglia il codice non blocca tutta l\'azienda', async () => {
+  const { db, alfa } = await scenario();
+  const tentativo = (code) => {
+    const request = new Request('http://t.local/api/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'cf-connecting-ip': '10.0.0.1' },
+      body: JSON.stringify({ code }),
+    });
+    return handleApi(request, env, db);
+  };
+  // Un'intera fabbrica esce dallo stesso IP: 20 errori sullo stesso codice sbagliato...
+  let bloccato = 0;
+  for (let i = 0; i < 20; i++) {
+    const r = await tentativo('SBAGLIATO');
+    if (r.status === 429) { bloccato = bloccato || i + 1; break; }
+  }
+  assert.ok(bloccato > 0 && bloccato <= 11, `il codice sbagliato viene bloccato (al tentativo ${bloccato})`);
+
+  // ...non devono impedire al collega con il codice giusto, dallo stesso IP, di entrare.
+  const buono = await tentativo(alfa.codeStaff);
+  assert.equal(buono.status, 200);
+});
+
+test('il foglio cucina elenca i piatti nell\'ordine delle lettere', async () => {
+  const { db, admin, alfa, rossi, bianchi } = await scenario();
+  for (const [employee, codice] of [[rossi, 'B'], [bianchi, 'A']]) {
+    const token = await staffToken(db, alfa.codeStaff, employee.id);
+    const { mappa } = await piattiDelGiorno(db, token, 1);
+    await ordina(db, token, 1, [mappa[codice]]);
+  }
+  const cucina = (await call(db, 'GET', `/api/admin/report/kitchen?week=${WEEK}`, { token: admin })).body;
+  const primi = cucina.days.find((d) => d.day === 1).courses.find((c) => c.name === 'Primi');
+  assert.deepEqual(primi.dishes.map((d) => d.codes), ['A', 'B'], 'prima la A, poi la B');
+});
