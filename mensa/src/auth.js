@@ -166,6 +166,25 @@ export async function checkLoginRate(db, ip, code) {
   }
 }
 
+/** Il PIN ha 4-6 cifre: senza un tetto per persona si indovinerebbe in pochi minuti. */
+const MAX_PIN_ATTEMPTS = 8;
+
+export async function checkPinRate(db, employeeId) {
+  const window = Math.floor(Date.now() / 1000 / WINDOW_SECONDS);
+  if ((await countOf(db, `pin|${employeeId}`, window)) >= MAX_PIN_ATTEMPTS) {
+    throw new HttpError(429, 'Troppi tentativi con il PIN. Riprova tra qualche minuto, o chiedi al referente di azzerarlo.');
+  }
+}
+
+export async function recordFailedPin(db, employeeId) {
+  const window = Math.floor(Date.now() / 1000 / WINDOW_SECONDS);
+  await db.run(
+    `INSERT INTO login_attempts (key, window_ts, count) VALUES (?, ?, 1)
+     ON CONFLICT(key, window_ts) DO UPDATE SET count = count + 1`,
+    [`pin|${employeeId}`, window]
+  );
+}
+
 export async function recordFailedLogin(db, ip, code) {
   const window = Math.floor(Date.now() / 1000 / WINDOW_SECONDS);
   const keys = await attemptKeys(ip, code);

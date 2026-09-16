@@ -84,7 +84,9 @@ async function api(path, { method = 'GET', body } = {}) {
   }
   const response = await fetch(path, init);
   const payload = response.status === 204 ? {} : await response.json().catch(() => ({}));
-  if (response.status === 401) {
+  // Un 401 significa "sessione da rifare", tranne dove è la credenziale stessa a
+  // essere sbagliata (PIN errato): lì si resta dove si è e si riprova.
+  if (response.status === 401 && !path.startsWith('/api/staff/identify')) {
     logout(payload.error || 'Sessione scaduta.');
     throw new Error(payload.error || 'Sessione scaduta.');
   }
@@ -265,6 +267,13 @@ async function viewLogin(message) {
   codice.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') entra();
   });
+  // Il referente manda in chat un link con il codice già dentro: si entra con un tocco.
+  const dalLink = new URLSearchParams(location.search).get('c');
+  if (dalLink && !message) {
+    codice.value = dalLink;
+    history.replaceState(null, '', location.pathname);
+    setTimeout(entra, 50);
+  }
   paint(h('div', { class: 'login' },
     h('img', { class: 'logo-img', src: '/icona.svg', alt: '', width: '64', height: '64' }),
     h('h1', { text: store.appName }),
@@ -277,6 +286,46 @@ async function viewLogin(message) {
 }
 
 // ── Dipendente: scelta del nome ───────────────────────────────────────────────
+
+/**
+ * Il PIN personale: al primo accesso lo si sceglie, poi lo si inserisce.
+ * È quello che permette di mandare il link in una chat di gruppo senza che
+ * chiunque possa ordinare a nome di un collega.
+ */
+function pinDialog(employee) {
+  const campo = (placeholder, extra = {}) =>
+    h('input', { class: 'field code-input', type: 'password', inputmode: 'numeric', autocomplete: 'off', maxlength: '6', placeholder, ...extra });
+  const pin = campo(employee.hasPin ? 'PIN' : 'Scegli un PIN (4-6 cifre)');
+  const conferma = employee.hasPin ? null : campo('Ripeti il PIN');
+  const entra = h('button', { class: 'btn btn-small btn-primary', text: 'Entra' });
+  const box = dialog(`Ciao, ${employee.name.split(' ')[0]}`,
+    [
+      h('p', { class: 'small muted', text: employee.hasPin
+        ? 'Inserisci il tuo PIN.'
+        : 'È il tuo primo accesso: scegli un PIN di 4-6 cifre. Ti servirà ogni volta che entri, e nessun altro potrà ordinare a nome tuo.' }),
+      pin,
+      conferma,
+      employee.hasPin ? h('p', { class: 'small muted', text: 'PIN dimenticato? Il referente della tua azienda può azzerarlo.' }) : null,
+    ],
+    [h('button', { class: 'btn btn-small', text: 'Annulla', onclick: () => box.close() }), entra]);
+  const invia = () => guard(async () => {
+    if (!employee.hasPin && pin.value !== conferma.value) {
+      toast('I due PIN non coincidono.', true);
+      return;
+    }
+    const body = employee.hasPin ? { employeeId: employee.id, pin: pin.value } : { employeeId: employee.id, newPin: pin.value };
+    const result = await api('/api/staff/identify', { method: 'POST', body });
+    box.close();
+    store.token = result.token;
+    localStorage.setItem(TOKEN_KEY, result.token);
+    store.employee = result.employee;
+    renderTopbar();
+    await viewStaffOrder();
+  });
+  entra.addEventListener('click', invia);
+  for (const campoPin of [pin, conferma]) campoPin?.addEventListener('keydown', (e) => { if (e.key === 'Enter') invia(); });
+  pin.focus();
+}
 
 async function viewStaffPick() {
   setSubmitbar();
@@ -294,14 +343,7 @@ async function viewStaffPick() {
     names.replaceChildren(...visible.map((employee) =>
       h('button', {
         class: 'name-btn',
-        onclick: () => guard(async () => {
-          const result = await api('/api/staff/identify', { method: 'POST', body: { employeeId: employee.id } });
-          store.token = result.token;
-          localStorage.setItem(TOKEN_KEY, result.token);
-          store.employee = result.employee;
-          renderTopbar();
-          await viewStaffOrder();
-        }),
+        onclick: () => pinDialog(employee),
       },
         h('span', { class: 'locker-badge', text: employee.locker }),
         h('span', { class: 'grow truncate', text: employee.name }))));
@@ -401,6 +443,7 @@ async function viewStaffOrder() {
     const chosen = selection[day];
     const dayMenu = data.menu.filter((item) => item.day === day);
     const unico = chosen.items.map(infoDi).find((item) => item?.single);
+    const sospeso = (data.suspended ?? []).includes(day);
     const card = h('section', { class: chosen.skip ? 'card day skipped' : 'card day' },
       h('div', { class: 'day-head' },
         h('h2', { text: dayLabel(store.week, day) }),
@@ -424,6 +467,9 @@ async function viewStaffOrder() {
             })
           : null));
 
+    if (sospeso) {
+      card.append(h('p', { class: 'notice notice-lock', text: 'Il referente ti ha messo in stand-by per questo giorno: il pasto non verrà consegnato. Se è un errore, parla con lui.' }));
+    }
     if (!dayMenu.length) {
       card.append(h('p', { class: 'empty-menu', text: chiusa ? 'Nessun menù per questo giorno.' : 'Menù non ancora pubblicato per questo giorno.' }));
       return card;
@@ -574,7 +620,29 @@ async function managerPeople() {
       h('span', { class: 'locker-badge', text: employee.locker }),
       // min-width evita che il nome venga schiacciato dai pulsanti: piuttosto vanno a capo loro.
       h('span', { class: 'grow', style: 'min-width:9rem', text: employee.name }),
+      employee.active ? null : h('span', { class: 'pill pill-skip', text: 'bloccata' }),
+      employee.active && !employee.hasPin ? h('span', { class: 'pill pill-todo', text: 'PIN da scegliere' }) : null,
       h('button', { class: 'btn btn-small', style: 'margin-left:auto', text: 'Modifica', onclick: () => employeeDialog(employee, managerPeople) }),
+      h('button', {
+        class: 'btn btn-small',
+        text: employee.active ? 'Blocca' : 'Riattiva',
+        title: employee.active ? 'Non entra più e i suoi pasti non si preparano, finché non la riattivi' : 'Torna in elenco con i suoi ordini',
+        onclick: () => guard(async () => {
+          await api(`/api/manager/employees/${employee.id}`, { method: 'PUT', body: { name: employee.name, locker: employee.locker, active: !employee.active } });
+          toast(employee.active ? `${employee.name} bloccata: niente pasti finché non la riattivi` : `${employee.name} riattivata`);
+          await managerPeople();
+        }),
+      }),
+      employee.hasPin ? h('button', {
+        class: 'btn btn-small',
+        text: 'Azzera PIN',
+        onclick: () => guard(async () => {
+          if (!(await confirmBox(`Azzerare il PIN di ${employee.name}? Al prossimo accesso ne sceglierà uno nuovo.`, 'Azzera'))) return;
+          await api(`/api/manager/employees/${employee.id}/pin/reset`, { method: 'POST' });
+          toast('PIN azzerato');
+          await managerPeople();
+        }),
+      }) : null,
       h('button', {
         class: 'btn btn-small btn-danger',
         text: 'Elimina',
@@ -590,11 +658,24 @@ async function managerPeople() {
       h('div', { class: 'card-head' },
         h('h2', { text: 'Persone' }),
         h('span', { class: 'muted small', text: `${data.employees.length} in elenco` })),
-      h('p', { class: 'muted small', text: 'Il numero di armadietto ordina la lista di consegna: deve essere unico in azienda.' }),
+      h('p', { class: 'muted small', text: 'Il numero di armadietto ordina la lista di consegna: deve essere unico in azienda. "Blocca" toglie una persona dai pasti finché non la riattivi; per un\u2019assenza di qualche giorno usa lo stand-by in "Stato ordini".' }),
+      shareLinkBox(data.codeStaff),
       data.employees.length ? list : h('p', { class: 'muted', text: 'Nessuna persona inserita.' }),
       h('div', { class: 'row-wrap', style: 'margin-top:14px' },
         h('button', { class: 'btn btn-primary grow', text: '+ Aggiungi persona', onclick: () => employeeDialog(null, managerPeople) }),
         h('button', { class: 'btn', text: 'Incolla un elenco', onclick: () => bulkEmployeesDialog(managerPeople) }))));
+}
+
+/** Il link con il codice dell'azienda già dentro, da mandare nella chat di gruppo. */
+function shareLinkBox(codeStaff) {
+  const link = `${location.origin}${location.pathname}?c=${codeStaff}`;
+  return h('div', { class: 'notice', style: 'margin:10px 0 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap' },
+    h('span', { class: 'grow small', style: 'word-break:break-all' }, h('strong', { text: 'Link per i dipendenti: ' }), h('span', { text: link })),
+    h('button', {
+      class: 'btn btn-small',
+      text: 'Copia',
+      onclick: () => navigator.clipboard?.writeText(link).then(() => toast('Link copiato: incollalo nella chat di gruppo')).catch(() => toast(link)),
+    }));
 }
 
 /** Elenco incollato da Excel: anteprima di che cosa entra e che cosa no, poi si importa. */
@@ -654,10 +735,42 @@ async function managerStatus() {
       h('span', { class: 'small muted', text: employee.submitted ? formatStamp(employee.updatedAt) : 'mai inviato' }),
       h('div', { class: 'row-wrap small', style: 'gap:4px;width:100%' }, employee.days.map((value, index) => {
         const label = GIORNI_BREVI[index];
-        if (value === 'skip') return h('span', { class: 'pill pill-skip', text: `${label} non pranza` });
-        if (value > 0) return h('span', { class: 'pill pill-ok', text: `${label} ✓` });
-        return h('span', { class: 'pill pill-todo', text: `${label} —` });
+        const sospeso = value === 'sospeso';
+        // Un tocco sul giorno mette la persona in stand-by (malattia, ferie) o la rimette: vale anche a settimana chiusa.
+        const toggle = () => guard(async () => {
+          await api('/api/manager/suspensions', { method: 'PUT', body: { employeeId: employee.id, week: store.week, day: index + 1, suspended: !sospeso } });
+          toast(sospeso ? `${employee.name}: ${label} riattivato` : `${employee.name}: ${label} in stand-by, il pasto non si prepara`);
+          await managerStatus();
+        });
+        const classe = sospeso ? 'pill pill-lock' : value === 'skip' ? 'pill pill-skip' : value > 0 ? 'pill pill-ok' : 'pill pill-todo';
+        const testo = sospeso ? `${label} stand-by` : value === 'skip' ? `${label} non pranza` : value > 0 ? `${label} \u2713` : `${label} \u2014`;
+        return h('button', { type: 'button', class: `${classe} pill-btn`, text: testo, title: sospeso ? 'Tocca per riattivare' : 'Tocca per mettere in stand-by questo giorno', onclick: toggle });
       }))));
+
+  const extrasBox = h('div', { class: 'card', style: 'margin-top:12px' },
+    h('div', { class: 'card-head' },
+      h('h2', { text: 'Pasti extra' }),
+      h('span', { class: 'muted small', text: `${data.extras.reduce((s, x) => s + x.qty, 0)} in totale` })),
+    h('p', { class: 'small muted', text: 'Per chi non è in elenco: un interinale, un ospite. Si aggiungono entro la scadenza; togliere si può sempre.' }),
+    data.extras.length
+      ? h('div', { class: 'list' }, data.extras.map((extra) =>
+          h('div', { class: 'list-item' },
+            h('span', { class: 'locker-badge', text: `${extra.qty}\u00d7` }),
+            h('div', { class: 'grow' },
+              h('div', {}, h('strong', { text: GIORNI_BREVI[extra.day - 1] }), extra.note ? h('span', { class: 'muted', text: ` \u00b7 ${extra.note}` }) : null),
+              h('div', { class: 'choices' }, extra.choices.map((c, i) => [i ? h('span', { text: ' \u00b7 ' }) : null, h('span', { class: 'slot-code', text: c.code }), h('span', { text: c.dish })]))),
+            h('button', {
+              class: 'btn btn-small btn-danger', text: 'Togli',
+              onclick: () => guard(async () => {
+                await api(`/api/manager/extras/${extra.id}`, { method: 'DELETE' });
+                toast('Pasti extra tolti');
+                await managerStatus();
+              }),
+            }))))
+      : h('p', { class: 'muted small', text: 'Nessun pasto extra questa settimana.' }),
+    data.deadline.locked
+      ? null
+      : h('button', { class: 'btn btn-block', style: 'margin-top:12px', text: '+ Aggiungi pasti extra', onclick: () => extraDialog(managerStatus) }));
 
   paint(managerHeader(),
     weekBar((delta) => { store.week = shiftWeek(store.week, delta); viewManager('settimana'); }),
@@ -667,7 +780,56 @@ async function managerStatus() {
         h('span', { class: 'muted small', text: `${inviati} su ${data.employees.length} hanno inviato` })),
       h('p', { class: data.deadline.locked ? 'small notice notice-lock' : 'small muted', style: 'margin-bottom:12px',
         text: data.deadline.locked ? `Settimana chiusa ${data.deadline.label}: gli ordini sono definitivi.` : `Aperta fino a ${data.deadline.label}.` }),
-      data.employees.length ? h('div', { class: 'list' }, rows) : h('p', { class: 'muted', text: 'Nessuna persona in elenco.' })));
+      h('p', { class: 'small muted', text: 'Tocca un giorno per mettere la persona in stand-by (malattia, ferie): il pasto non si prepara. Vale anche a settimana chiusa.' }),
+      data.employees.length ? h('div', { class: 'list' }, rows) : h('p', { class: 'muted', text: 'Nessuna persona in elenco.' })),
+    extrasBox);
+}
+
+/** Pasti extra: giorno, quantità e piatti, con le stesse regole di un ordine normale. */
+async function extraDialog(onDone) {
+  const dati = await api(`/api/manager/menu?week=${store.week}`);
+  const byId = new Map(dati.menu.map((i) => [i.id, i]));
+  const infoDi = (id) => byId.get(id);
+  let giorno = DAYS.find((d) => dati.menu.some((m) => m.day === d)) ?? 1;
+  let scelte = [];
+  const qta = h('input', { class: 'field', type: 'number', min: '1', max: '99', value: '1', style: 'width:90px' });
+  const nota = h('input', { class: 'field grow', placeholder: 'Nota (es. interinali)', maxlength: '60', autocomplete: 'off' });
+  const giorni = h('div', { class: 'tabs', style: 'padding:0' });
+  const opzioni = h('div', { class: 'stack' });
+  const aggiungi = h('button', { class: 'btn btn-small btn-primary', text: 'Aggiungi', disabled: true });
+
+  const disegna = () => {
+    giorni.replaceChildren(...DAYS.map((d) => h('button', { text: dayLabel(store.week, d), 'aria-selected': d === giorno ? 'true' : 'false', onclick: () => { giorno = d; scelte = []; disegna(); } })));
+    opzioni.replaceChildren();
+    for (const course of dati.courses) {
+      const piatti = dati.menu.filter((m) => m.day === giorno && m.courseId === course.id);
+      if (!piatti.length) continue;
+      opzioni.append(h('div', { class: 'course' },
+        h('div', { class: 'course-head' }, h('h3', { text: course.name })),
+        h('div', { class: 'options' }, piatti.map((item) => {
+          const selezionato = scelte.includes(item.id);
+          const esito = selezionato ? scelte : simulaAggiunta(scelte, item, dati.rules, infoDi);
+          return h('button', {
+            class: 'opt', type: 'button', 'aria-pressed': selezionato ? 'true' : 'false', disabled: !selezionato && esito === null,
+            onclick: () => { const p = simulaAggiunta(scelte, item, dati.rules, infoDi); if (p) { scelte = p; disegna(); } },
+          }, h('span', { class: 'mark', text: '\u2713' }), h('span', { class: 'slot-code', text: item.code }), h('span', { class: 'grow', text: item.name }));
+        }))));
+    }
+    if (!opzioni.children.length) opzioni.append(h('p', { class: 'muted small', text: 'Nessun menù per questo giorno.' }));
+    aggiungi.disabled = !scelte.length;
+  };
+  disegna();
+
+  const box = dialog('Pasti extra',
+    [giorni, h('div', { class: 'row' }, h('span', { text: 'Quanti' }), qta, nota), opzioni],
+    [h('button', { class: 'btn btn-small', text: 'Annulla', onclick: () => box.close() }), aggiungi]);
+  box.classList.add('wide');
+  aggiungi.addEventListener('click', () => guard(async () => {
+    await api('/api/manager/extras', { method: 'POST', body: { week: store.week, day: giorno, qty: Number(qta.value), note: nota.value, items: scelte } });
+    box.close();
+    toast('Pasti extra aggiunti');
+    await onDone();
+  }));
 }
 
 async function managerDelivery() {
@@ -1055,6 +1217,17 @@ function deliveryNodes(report, showCompany = true) {
     }
     for (const company of day.companies) {
       if (showCompany) section.append(h('div', { class: 'course-label', text: `${company.company} · ${company.people.length} persone` }));
+      for (const extra of company.extras ?? []) {
+        section.append(h('div', { class: 'delivery-person' },
+          h('span', { class: 'locker-badge', text: `${extra.qty}\u00d7` }),
+          h('div', { class: 'grow' },
+            h('div', {}, h('strong', { text: `Extra${extra.note ? ` \u00b7 ${extra.note}` : ''}` })),
+            h('div', { class: 'choices' }, extra.choices.map((c, index) => [
+              index ? h('span', { text: ' \u00b7 ' }) : null,
+              h('span', { class: 'slot-code', text: c.code }),
+              h('span', { text: c.dish }),
+            ])))));
+      }
       for (const person of company.people) {
         section.append(h('div', { class: 'delivery-person' },
           h('span', { class: 'locker-badge', text: person.locker }),

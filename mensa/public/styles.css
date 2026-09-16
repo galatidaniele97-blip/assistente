@@ -433,3 +433,7 @@ footer.legal { max-width: 720px; margin: 28px auto 0; padding: 0 16px; font-size
 .skip-btn[disabled] { opacity: 0.6; cursor: default; }
 .menu-grid.anteprima td { min-width: 120px; padding: 4px 6px; font-size: 0.86rem; border-bottom: 1px solid var(--line); }
 .menu-grid.anteprima th { min-width: 0; }
+
+/* ── Stand-by e pillole toccabili (stato ordini del referente) ─────────── */
+.pill-btn { border: 0; cursor: pointer; font: inherit; font-size: 0.78rem; font-weight: 700; min-height: 32px; }
+.pill-lock { background: var(--ink); color: var(--surface); }

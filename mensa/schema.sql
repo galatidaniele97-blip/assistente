@@ -55,7 +55,8 @@ CREATE TABLE IF NOT EXISTS employees (
   company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
   name       TEXT NOT NULL,
   locker     TEXT NOT NULL,            -- numero armadietto (testo: ammette "12A")
-  active     INTEGER NOT NULL DEFAULT 1,
+  active     INTEGER NOT NULL DEFAULT 1,  -- 0 = bloccato dal referente: non ordina, non riceve
+  pin_hash   TEXT,                     -- PIN personale (PBKDF2); NULL finché la persona non lo sceglie
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_employees_company ON employees(company_id, active);
@@ -91,6 +92,37 @@ CREATE TABLE IF NOT EXISTS order_days (
   day      INTEGER NOT NULL CHECK (day BETWEEN 1 AND 5),
   skip     INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (order_id, day)
+);
+
+-- Giorni in cui il referente ha messo una persona in stand-by (malattia, ferie):
+-- il pasto ordinato non viene cucinato né consegnato. Si può fare anche a
+-- settimana chiusa, perché toglie soltanto.
+CREATE TABLE IF NOT EXISTS employee_suspensions (
+  employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  week        TEXT NOT NULL,
+  day         INTEGER NOT NULL CHECK (day BETWEEN 1 AND 5),
+  PRIMARY KEY (employee_id, week, day)
+);
+CREATE INDEX IF NOT EXISTS idx_suspensions_week ON employee_suspensions(week);
+
+-- Pasti "extra" ordinati dal referente per persone non in elenco (un
+-- interinale per un giorno): una riga per combinazione di piatti, con quantità.
+CREATE TABLE IF NOT EXISTS extra_orders (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  week       TEXT NOT NULL,
+  day        INTEGER NOT NULL CHECK (day BETWEEN 1 AND 5),
+  qty        INTEGER NOT NULL CHECK (qty BETWEEN 1 AND 99),
+  note       TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_extra_week ON extra_orders(company_id, week);
+CREATE INDEX IF NOT EXISTS idx_extra_week_all ON extra_orders(week);
+
+CREATE TABLE IF NOT EXISTS extra_choices (
+  extra_id INTEGER NOT NULL REFERENCES extra_orders(id) ON DELETE CASCADE,
+  item_id  INTEGER NOT NULL REFERENCES menu_items(id) ON DELETE CASCADE,
+  PRIMARY KEY (extra_id, item_id)
 );
 
 CREATE TABLE IF NOT EXISTS order_choices (

@@ -9,8 +9,8 @@ documenti che fanno funzionare il servizio: **cosa cucinare** e **cosa consegnar
 | Ruolo | Come entra | Cosa fa |
 | --- | --- | --- |
 | **Ristorante** | codice del ristorante | crea le aziende, assegna i codici, configura lettere e massimi, compila la griglia del menù (anche diversa per azienda, con "copia a tutte"), consulta i riepiloghi, cancella i dati storici |
-| **Referente azienda** | codice referente | gestisce l'elenco dei propri dipendenti (nome + numero di armadietto), vede lo stato degli ordini e la lista di consegna della propria azienda |
-| **Dipendente** | codice dipendenti | sceglie il proprio nome da un elenco, ordina la settimana successiva per i cinque giorni, può segnare "non pranzo", può correggere fino alla scadenza |
+| **Referente azienda** | codice referente | gestisce l'elenco dei propri dipendenti (nome + armadietto), condivide il link, mette le persone in stand-by o le blocca, aggiunge pasti extra, vede stato ordini e consegne della propria azienda |
+| **Dipendente** | codice dipendenti + PIN personale | sceglie il proprio nome da un elenco, entra con il suo PIN, ordina la settimana successiva per i cinque giorni, può segnare "non pranzo", può correggere fino alla scadenza |
 
 Ogni azienda ha **due codici**: uno per i dipendenti, uno per il referente. Il codice del ristorante è
 il terzo. Sono tutti rigenerabili dalla scheda *Aziende* — per esempio quando una persona lascia l'azienda.
@@ -49,6 +49,31 @@ scelte impossibili e il server le rifiuta comunque.
 ha già A sostituisce il primo invece di sommarsi, e toccare un piatto unico sostituisce tutto il
 resto del giorno. Quando i 3 piatti sono presi, le altre caselle si spengono: il limite si impedisce,
 non si segnala dopo.
+
+## Il PIN personale e il link in chat
+
+Il referente manda nella chat di gruppo un link con il codice dell'azienda già dentro
+(`…/?c=CODICE`, pulsante "Copia" nella scheda *Persone*). Chi lo apre sceglie il proprio nome dall'elenco
+e, **al primo accesso, sceglie un PIN** di 4-6 cifre; da lì in poi lo inserisce ogni volta. Così nessuno
+può ordinare a nome di un collega, e il nome continua a non digitarsi mai. PIN dimenticato o impostato
+da qualcun altro per sbaglio: il referente lo azzera con un tocco e la persona ne sceglie uno nuovo.
+Otto tentativi sbagliati bloccano quel PIN per un quarto d'ora; nel database sta solo l'impronta.
+
+## Stand-by, blocco, pasti extra
+
+- **Stand-by per giorno.** Valeria ha ordinato venerdì, martedì si mette in malattia: il referente tocca
+  i giorni nello *Stato ordini* e quei pasti spariscono da cucina e consegne — nessuno li cuoce, nessuno
+  li paga. Vale anche a settimana chiusa, perché toglie soltanto; toccare di nuovo riattiva.
+- **Blocco.** *Blocca* toglie una persona dall'elenco e dai pasti finché non la si riattiva (dimissioni,
+  lunga assenza); i suoi ordini restano, così *Riattiva* rimette tutto com'era.
+- **Pasti extra.** Per chi non è in elenco — un interinale per un giorno, un ospite — il referente
+  aggiunge "N pasti con A, E, H" senza registrare nessuno. Stesse regole di un ordine normale, contati in
+  cucina, elencati in consegna sotto l'azienda e nel CSV come `EXTRA`.
+
+Una regola tiene insieme tutto: **dopo la scadenza il referente può solo togliere pasti, mai
+aggiungerne.** Sospendere o togliere un extra fa cuocere di meno, nessun danno; aggiungere un extra il
+lunedì per uno arrivato all'ultimo resta una telefonata, perché la cucina non può cuocere ciò che non
+ha pianificato.
 
 ## La scadenza: venerdì alle 12
 
@@ -89,7 +114,7 @@ Serve solo Node 22.5 o superiore (nessuna dipendenza da installare: il database 
 
 ```bash
 npm start           # http://localhost:8787
-npm test            # 28 test sulle regole di dominio
+npm test            # 32 test sulle regole di dominio
 ```
 
 Al primo avvio la pagina chiede nome del ristorante e codice di accesso: da lì si creano le aziende.
@@ -195,10 +220,11 @@ Le scelte alimentari possono rivelare dati sensibili (allergie, convinzioni reli
   client, HSTS, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`.
 - **CSV a prova di formule.** Un nome che inizia con `=`, `+`, `-` o `@` viene neutralizzato con un
   apostrofo: Excel lo mostra come testo invece di eseguirlo.
-- **Rischio residuo, per progetto:** chi ha il codice dipendenti di un'azienda può ordinare a nome di un
-  collega, perché il nome si sceglie da un elenco. È la regola chiave della traccia e la causa degli
-  errori di oggi è l'opposto (firme sbagliate a mano). Se un giorno servisse, un PIN personale per
-  dipendente è l'estensione naturale.
+- **PIN personale per dipendente** (PBKDF2, 8 tentativi ogni 15 minuti per persona): chi ha il codice
+  dell'azienda vede l'elenco dei nomi ma non può ordinare a nome di un collega. Un PIN sbagliato non
+  butta fuori dalla sessione: si riprova.
+- **Rischio residuo:** al primo accesso il PIN lo sceglie chi arriva prima. In un'azienda è evidente chi
+  è stato, e il referente lo azzera; se servisse più rigore, il PIN iniziale lo assegna il referente.
 
 ## Scelte progettuali degne di nota
 

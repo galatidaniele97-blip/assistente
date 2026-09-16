@@ -13,6 +13,8 @@ import {
   recordFailedLogin,
   hashCode,
   verifyCode,
+  checkPinRate,
+  recordFailedPin,
 } from './auth.js';
 import { normalizeSettings, deadlineFor, isLocked, deadlineLabel } from '../public/shared/scadenza.js';
 import { isValidWeek, currentWeek, shiftWeek, GIORNI, dayLabel, weekLabel } from '../public/shared/week.js';
@@ -145,25 +147,43 @@ async function staffEmployees(request, env, db) {
   const session = await requireSession(request, env, ['staff'], db);
   const company = await companyOf(db, session);
   const employees = await db.all(
-    'SELECT id, name, locker FROM employees WHERE company_id = ? AND active = 1 ORDER BY name COLLATE NOCASE',
+    'SELECT id, name, locker, (pin_hash IS NOT NULL) AS hasPin FROM employees WHERE company_id = ? AND active = 1 ORDER BY name COLLATE NOCASE',
     [company.id]
   );
-  return json({ company: company.name, employees });
+  return json({ company: company.name, employees: employees.map((e) => ({ ...e, hasPin: !!e.hasPin })) });
 }
 
-/** Il nome non si digita: si sceglie dall'elenco e il token viene legato a quella persona. */
+const PIN_RE = /^\d{4,6}$/;
+
+/**
+ * Il nome si sceglie dall'elenco; il PIN personale dice che sei davvero tu.
+ * Al primo accesso la persona lo sceglie; da lì in poi lo inserisce.
+ * Se qualcun altro l'ha impostato prima di lei, il referente lo azzera.
+ */
 async function staffIdentify(request, env, db) {
   const session = await requireSession(request, env, ['staff'], db);
   const company = await companyOf(db, session);
   const body = await readJson(request);
   const employee = await db.first(
-    'SELECT id, name, locker FROM employees WHERE id = ? AND company_id = ? AND active = 1',
+    'SELECT id, name, locker, pin_hash AS pinHash FROM employees WHERE id = ? AND company_id = ? AND active = 1',
     [id(body.employeeId, 'employeeId'), company.id]
   );
   if (!employee) throw bad('Nominativo non disponibile.');
+
+  if (!employee.pinHash) {
+    const newPin = String(body.newPin ?? '');
+    if (!PIN_RE.test(newPin)) throw bad('Scegli un PIN di 4-6 cifre: ti servirà ogni volta che entri.');
+    await db.run('UPDATE employees SET pin_hash = ? WHERE id = ?', [await hashCode(newPin), employee.id]);
+  } else {
+    await checkPinRate(db, employee.id);
+    if (!(await verifyCode(String(body.pin ?? ''), employee.pinHash))) {
+      await recordFailedPin(db, employee.id);
+      throw new HttpError(401, 'PIN errato.');
+    }
+  }
   return json({
     token: await issueToken(env.SESSION_SECRET, { r: 'staff', c: company.id, e: employee.id, v: session.v }),
-    employee,
+    employee: { id: employee.id, name: employee.name, locker: employee.locker },
   });
 }
 
@@ -199,6 +219,7 @@ async function staffWeek(request, env, db, url) {
     }
   }
   const { deadline } = await settingsOf(db);
+  const suspended = (await db.all('SELECT day FROM employee_suspensions WHERE employee_id = ? AND week = ?', [employee.id, w])).map((r) => r.day);
   return json({
     week: w,
     company: company.name,
@@ -208,6 +229,7 @@ async function staffWeek(request, env, db, url) {
     menu: items,
     order: order ? { updatedAt: order.updatedAt, days } : null,
     deadline: deadlineInfo(w, deadline),
+    suspended,
   });
 }
 
@@ -290,11 +312,11 @@ async function managerEmployees(request, env, db) {
   const session = await requireSession(request, env, ['manager'], db);
   const company = await companyOf(db, session);
   const employees = await db.all(
-    'SELECT id, name, locker, active FROM employees WHERE company_id = ? ORDER BY name COLLATE NOCASE',
+    'SELECT id, name, locker, active, (pin_hash IS NOT NULL) AS hasPin FROM employees WHERE company_id = ? ORDER BY name COLLATE NOCASE',
     [company.id]
   );
   employees.sort((a, b) => lockerSort(a.locker, b.locker));
-  return json({ company: company.name, employees });
+  return json({ company: company.name, codeStaff: (await db.first('SELECT code_staff AS c FROM companies WHERE id = ?', [company.id])).c, employees: employees.map((e) => ({ ...e, hasPin: !!e.hasPin })) });
 }
 
 async function managerCreateEmployee(request, env, db) {
@@ -358,6 +380,111 @@ async function managerBulkEmployees(request, env, db) {
   return json({ inserted: inserted.length, skipped, conflicts }, statements.length ? 201 : 200);
 }
 
+/** Il referente azzera il PIN: al prossimo accesso la persona ne sceglie uno nuovo. */
+async function managerResetPin(request, env, db, employeeId) {
+  const session = await requireSession(request, env, ['manager'], db);
+  const company = await companyOf(db, session);
+  const result = await db.run('UPDATE employees SET pin_hash = NULL WHERE id = ? AND company_id = ?', [employeeId, company.id]);
+  if (!result.changes) throw new HttpError(404, 'Persona non trovata.');
+  await db.run('DELETE FROM login_attempts WHERE key = ?', [`pin|${employeeId}`]);
+  return json({ ok: true });
+}
+
+/**
+ * Stand-by di una persona per un giorno (malattia, ferie): il pasto non si
+ * cucina e non si consegna. Vale anche a settimana chiusa, perché toglie soltanto;
+ * riattivare ripristina un pasto che era già stato pianificato.
+ */
+async function managerSuspend(request, env, db) {
+  const session = await requireSession(request, env, ['manager'], db);
+  const company = await companyOf(db, session);
+  const body = await readJson(request);
+  const employeeId = id(body.employeeId, 'employeeId');
+  const w = week(body.week);
+  const day = int(body.day, { field: 'giorno', min: 1, max: 5 });
+  const employee = await db.first('SELECT id FROM employees WHERE id = ? AND company_id = ?', [employeeId, company.id]);
+  if (!employee) throw new HttpError(404, 'Persona non trovata.');
+  if (body.suspended === true) {
+    await db.run('INSERT OR IGNORE INTO employee_suspensions (employee_id, week, day) VALUES (?, ?, ?)', [employeeId, w, day]);
+  } else {
+    await db.run('DELETE FROM employee_suspensions WHERE employee_id = ? AND week = ? AND day = ?', [employeeId, w, day]);
+  }
+  return json({ ok: true, suspended: body.suspended === true });
+}
+
+/** Il menù della settimana visto dal referente: serve per comporre i pasti extra. */
+async function managerMenu(request, env, db, url) {
+  const session = await requireSession(request, env, ['manager'], db);
+  const company = await companyOf(db, session);
+  const w = week(url.searchParams.get('week'));
+  const { deadline } = await settingsOf(db);
+  return json({
+    week: w,
+    courses: await coursesOf(db, company.id),
+    rules: await rulesOf(db, company.id),
+    menu: (await menuOf(db, company.id, w)).map((item) => ({ ...item, single: !!item.single })),
+    deadline: deadlineInfo(w, deadline),
+  });
+}
+
+async function extrasOf(db, companyId, w) {
+  const extras = await db.all(
+    'SELECT id, day, qty, note, updated_at AS updatedAt FROM extra_orders WHERE company_id = ? AND week = ? ORDER BY day, id',
+    [companyId, w]
+  );
+  if (!extras.length) return [];
+  const placeholders = extras.map(() => '?').join(',');
+  const choices = await db.all(
+    `SELECT xc.extra_id AS extraId, mi.id AS itemId, s.code, mi.name AS dish
+       FROM extra_choices xc JOIN menu_items mi ON mi.id = xc.item_id JOIN slots s ON s.id = mi.slot_id
+      WHERE xc.extra_id IN (${placeholders}) ORDER BY s.pos`,
+    extras.map((x) => x.id)
+  );
+  for (const extra of extras) extra.choices = choices.filter((c) => c.extraId === extra.id).map(({ itemId, code, dish }) => ({ itemId, code, dish }));
+  return extras;
+}
+
+/**
+ * Pasti extra per persone non in elenco (un interinale per un giorno). Stesse
+ * regole di un ordine normale; entro la scadenza, perché aggiunge lavoro alla cucina.
+ */
+async function managerAddExtra(request, env, db) {
+  const session = await requireSession(request, env, ['manager'], db);
+  const company = await companyOf(db, session);
+  const body = await readJson(request);
+  const w = week(body.week);
+  const { deadline } = await settingsOf(db);
+  if (isLocked(w, deadline)) {
+    throw new HttpError(423, `Ordini chiusi ${deadlineLabel(w, deadline)}: dopo la scadenza si possono solo togliere pasti, non aggiungerne.`);
+  }
+  const day = int(body.day, { field: 'giorno', min: 1, max: 5 });
+  const qty = int(body.qty, { field: 'quantità', min: 1, max: 99 });
+  const note = typeof body.note === 'string' ? body.note.trim().slice(0, 60) : '';
+  const rules = await rulesOf(db, company.id);
+  const allowed = new Map((await menuOf(db, company.id, w)).map((item) => [item.id, { ...item, single: !!item.single }]));
+  const items = [...new Set((Array.isArray(body.items) ? body.items : []).map((v) => id(v, 'piatto')))];
+  if (!items.length) throw bad('Scegli almeno un piatto.');
+  const scelte = items.map((itemId) => {
+    const item = allowed.get(itemId);
+    if (!item || item.day !== day) throw bad(`Piatto non disponibile per ${GIORNI[day - 1]}.`);
+    return item;
+  });
+  const errore = verificaGiorno(scelte, rules);
+  if (errore) throw bad(`${GIORNI[day - 1]}: ${errore}`);
+  const created = await db.run('INSERT INTO extra_orders (company_id, week, day, qty, note) VALUES (?, ?, ?, ?, ?)', [company.id, w, day, qty, note]);
+  await db.batch(items.map((itemId) => ({ sql: 'INSERT INTO extra_choices (extra_id, item_id) VALUES (?, ?)', params: [created.lastId, itemId] })));
+  return json({ id: created.lastId }, 201);
+}
+
+/** Togliere un extra si può sempre: la cucina cuoce di meno. */
+async function managerDeleteExtra(request, env, db, extraId) {
+  const session = await requireSession(request, env, ['manager'], db);
+  const company = await companyOf(db, session);
+  const result = await db.run('DELETE FROM extra_orders WHERE id = ? AND company_id = ?', [extraId, company.id]);
+  if (!result.changes) throw new HttpError(404, 'Pasto extra non trovato.');
+  return json({ ok: true });
+}
+
 async function managerUpdateEmployee(request, env, db, employeeId) {
   const session = await requireSession(request, env, ['manager'], db);
   const company = await companyOf(db, session);
@@ -414,6 +541,13 @@ async function managerWeek(request, env, db, url) {
       counts.set(`${row.orderId}:${row.day}`, 'skip');
     }
   }
+  const suspended = new Set(
+    (await db.all(
+      `SELECT es.employee_id AS employeeId, es.day FROM employee_suspensions es
+         JOIN employees e ON e.id = es.employee_id WHERE e.company_id = ? AND es.week = ?`,
+      [company.id, w]
+    )).map((r) => `${r.employeeId}:${r.day}`)
+  );
   const rows = employees
     .map((e) => {
       const order = byEmployee.get(e.id);
@@ -421,12 +555,18 @@ async function managerWeek(request, env, db, url) {
         ...e,
         submitted: !!order,
         updatedAt: order?.updatedAt ?? null,
-        days: DAYS.map((d) => (order ? counts.get(`${order.id}:${d}`) ?? 0 : 0)),
+        days: DAYS.map((d) => (suspended.has(`${e.id}:${d}`) ? 'sospeso' : order ? counts.get(`${order.id}:${d}`) ?? 0 : 0)),
       };
     })
     .sort((a, b) => lockerSort(a.locker, b.locker));
   const { deadline } = await settingsOf(db);
-  return json({ week: w, company: company.name, employees: rows, deadline: deadlineInfo(w, deadline) });
+  return json({
+    week: w,
+    company: company.name,
+    employees: rows,
+    extras: await extrasOf(db, company.id, w),
+    deadline: deadlineInfo(w, deadline),
+  });
 }
 
 // ── Ristorante: aziende e regole ──────────────────────────────────────────────
@@ -760,18 +900,45 @@ async function reportKitchen(db, w) {
        JOIN menu_items mi ON mi.id = oc.item_id
        JOIN slots s       ON s.id = mi.slot_id
        JOIN courses c     ON c.id = s.course_id
+       JOIN employees e   ON e.id = o.employee_id AND e.active = 1
       WHERE o.week = ?
+        AND NOT EXISTS (SELECT 1 FROM employee_suspensions es WHERE es.employee_id = o.employee_id AND es.week = o.week AND es.day = oc.day)
       GROUP BY mi.day, c.name COLLATE NOCASE, mi.name COLLATE NOCASE
       ORDER BY mi.day, pos, c.name COLLATE NOCASE, firstCode, mi.name COLLATE NOCASE`,
     [w]
   );
-  const meals = await db.all(
-    `SELECT oc.day AS day, COUNT(DISTINCT oc.order_id) AS people
-       FROM order_choices oc JOIN orders o ON o.id = oc.order_id
-      WHERE o.week = ? GROUP BY oc.day`,
+  // I pasti extra ordinati dai referenti si cuociono come gli altri.
+  const extraRows = await db.all(
+    `SELECT mi.day AS day, c.name AS course, MIN(c.pos) AS pos, mi.name AS dish,
+            GROUP_CONCAT(DISTINCT s.code) AS codes, MIN(s.code) AS firstCode, SUM(x.qty) AS qty
+       FROM extra_choices xc
+       JOIN extra_orders x ON x.id = xc.extra_id
+       JOIN menu_items mi  ON mi.id = xc.item_id
+       JOIN slots s        ON s.id = mi.slot_id
+       JOIN courses c      ON c.id = s.course_id
+      WHERE x.week = ?
+      GROUP BY mi.day, c.name COLLATE NOCASE, mi.name COLLATE NOCASE`,
     [w]
   );
+  for (const extra of extraRows) {
+    const found = rows.find((r) => r.day === extra.day && r.course.toLowerCase() === extra.course.toLowerCase() && r.dish.toLowerCase() === extra.dish.toLowerCase());
+    if (found) found.qty += extra.qty;
+    else rows.push(extra);
+  }
+  rows.sort((a, b) => a.day - b.day || a.pos - b.pos || a.course.localeCompare(b.course, 'it') || String(a.firstCode).localeCompare(String(b.firstCode)) || a.dish.localeCompare(b.dish, 'it'));
+  const meals = await db.all(
+    `SELECT oc.day AS day, COUNT(DISTINCT oc.order_id) AS people
+       FROM order_choices oc
+       JOIN orders o    ON o.id = oc.order_id
+       JOIN employees e ON e.id = o.employee_id AND e.active = 1
+      WHERE o.week = ?
+        AND NOT EXISTS (SELECT 1 FROM employee_suspensions es WHERE es.employee_id = o.employee_id AND es.week = o.week AND es.day = oc.day)
+      GROUP BY oc.day`,
+    [w]
+  );
+  const extraMeals = await db.all('SELECT day, SUM(qty) AS people FROM extra_orders WHERE week = ? GROUP BY day', [w]);
   const peopleByDay = new Map(meals.map((m) => [m.day, m.people]));
+  for (const m of extraMeals) peopleByDay.set(m.day, (peopleByDay.get(m.day) ?? 0) + m.people);
   const days = DAYS.map((day) => ({
     day,
     label: dayLabel(w, day),
@@ -805,13 +972,26 @@ async function reportDelivery(db, w, onlyCompanyId = null) {
             s.code AS code, c.name AS course, s.pos AS slotPos, mi.name AS dish
        FROM order_choices oc
        JOIN orders o      ON o.id = oc.order_id
-       JOIN employees e   ON e.id = o.employee_id
+       JOIN employees e   ON e.id = o.employee_id AND e.active = 1
        JOIN companies co  ON co.id = o.company_id
        JOIN menu_items mi ON mi.id = oc.item_id
        JOIN slots s       ON s.id = mi.slot_id
        JOIN courses c     ON c.id = s.course_id
       WHERE o.week = ?${filter}
+        AND NOT EXISTS (SELECT 1 FROM employee_suspensions es WHERE es.employee_id = o.employee_id AND es.week = o.week AND es.day = oc.day)
       ORDER BY oc.day, co.name COLLATE NOCASE, s.pos, s.code`,
+    params
+  );
+  const extraRows = await db.all(
+    `SELECT x.id AS extraId, x.day AS day, x.company_id AS companyId, co.name AS company, x.qty AS qty, x.note AS note,
+            s.code AS code, mi.name AS dish
+       FROM extra_orders x
+       JOIN companies co   ON co.id = x.company_id
+       JOIN extra_choices xc ON xc.extra_id = x.id
+       JOIN menu_items mi  ON mi.id = xc.item_id
+       JOIN slots s        ON s.id = mi.slot_id
+      WHERE x.week = ?${filter.replace('o.company_id', 'x.company_id')}
+      ORDER BY x.day, co.name COLLATE NOCASE, x.id, s.pos`,
     params
   );
   const days = DAYS.map((day) => ({ day, label: dayLabel(w, day), companies: [] }));
@@ -829,6 +1009,21 @@ async function reportDelivery(db, w, onlyCompanyId = null) {
       company.people.push(person);
     }
     person.choices.push({ code: row.code, course: row.course, dish: row.dish });
+  }
+  for (const row of extraRows) {
+    const target = index.get(row.day);
+    let company = target.companies.find((c) => c.companyId === row.companyId);
+    if (!company) {
+      company = { companyId: row.companyId, company: row.company, people: [] };
+      target.companies.push(company);
+    }
+    company.extras ??= [];
+    let extra = company.extras.find((x) => x.id === row.extraId);
+    if (!extra) {
+      extra = { id: row.extraId, qty: row.qty, note: row.note, choices: [] };
+      company.extras.push(extra);
+    }
+    extra.choices.push({ code: row.code, dish: row.dish });
   }
   for (const day of days) {
     day.companies.sort((a, b) => a.company.localeCompare(b.company, 'it'));
@@ -862,6 +1057,17 @@ function deliveryCsv(report) {
           person.name,
           person.choices.map((c) => c.code).join(''),
           person.choices.map((c) => `${c.code} ${c.dish}`).join(' | '),
+        ]);
+      }
+      for (const extra of company.extras ?? []) {
+        rows.push([
+          GIORNI[day.day - 1],
+          day.label,
+          company.company,
+          'EXTRA',
+          `${extra.qty} × ${extra.note || 'pasti extra'}`,
+          extra.choices.map((c) => c.code).join(''),
+          extra.choices.map((c) => `${c.code} ${c.dish}`).join(' | '),
         ]);
       }
     }
@@ -981,6 +1187,11 @@ export async function handleApi(request, env, db) {
       if (method === 'POST' && b === 'employees' && c === 'bulk') return await managerBulkEmployees(request, env, db);
       if (method === 'PUT' && b === 'employees' && c) return await managerUpdateEmployee(request, env, db, id(c));
       if (method === 'DELETE' && b === 'employees' && c) return await managerDeleteEmployee(request, env, db, id(c));
+      if (method === 'POST' && b === 'employees' && c && d === 'pin' && segments[4] === 'reset') return await managerResetPin(request, env, db, id(c));
+      if (method === 'PUT' && b === 'suspensions') return await managerSuspend(request, env, db);
+      if (method === 'GET' && b === 'menu') return await managerMenu(request, env, db, url);
+      if (method === 'POST' && b === 'extras' && !c) return await managerAddExtra(request, env, db);
+      if (method === 'DELETE' && b === 'extras' && c) return await managerDeleteExtra(request, env, db, id(c));
       if (method === 'GET' && b === 'week') return await managerWeek(request, env, db, url);
       if (method === 'GET' && b === 'delivery') {
         const session = await requireSession(request, env, ['manager'], db);
