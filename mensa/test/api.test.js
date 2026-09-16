@@ -83,6 +83,9 @@ async function scenario() {
   const rossi = (await call(db, 'POST', '/api/manager/employees', { token: mgrAlfa, body: { name: 'Mario Rossi', locker: '12' } })).body;
   const bianchi = (await call(db, 'POST', '/api/manager/employees', { token: mgrAlfa, body: { name: 'Anna Bianchi', locker: '3' } })).body;
   const verdi = (await call(db, 'POST', '/api/manager/employees', { token: mgrBeta, body: { name: 'Luca Verdi', locker: '7' } })).body;
+  for (const [mgr, persona] of [[mgrAlfa, rossi], [mgrAlfa, bianchi], [mgrBeta, verdi]]) {
+    await call(db, 'POST', `/api/manager/employees/${persona.id}/pin`, { token: mgr, body: { pin: '1234' } });
+  }
 
   const slotByCode = {};
   for (const course of alfa.courses) for (const slot of course.slots) slotByCode[slot.code] = slot.id;
@@ -91,10 +94,10 @@ async function scenario() {
   return { db, admin, alfa, beta, mgrAlfa, mgrBeta, rossi, bianchi, verdi, slotByCode };
 }
 
-/** Al primo accesso la persona sceglie il PIN; poi lo inserisce. Qui si fanno entrambe le cose con lo stesso valore. */
+/** Le persone dello scenario hanno il PIN "1234" assegnato dal referente. */
 async function staffToken(db, code, employeeId, pin = '1234') {
   const login = (await call(db, 'POST', '/api/login', { body: { code } })).body.token;
-  const esito = await call(db, 'POST', '/api/staff/identify', { token: login, body: { employeeId, newPin: pin, pin } });
+  const esito = await call(db, 'POST', '/api/staff/identify', { token: login, body: { employeeId, pin } });
   if (esito.status !== 200) throw new Error(`identify: ${esito.status} ${JSON.stringify(esito.body)}`);
   return esito.body.token;
 }
@@ -492,7 +495,7 @@ test('un corpo JSON senza content-type o troppo grande viene rifiutato', async (
 test('i CSV non eseguono formule: un nome che inizia con = viene neutralizzato', async () => {
   const { db, admin, alfa, mgrAlfa } = await scenario();
   const persona = (await call(db, 'POST', '/api/manager/employees', { token: mgrAlfa, body: { name: '=HYPERLINK("http://male")', locker: '77' } })).body;
-  const token = await staffToken(db, alfa.codeStaff, persona.id);
+  const token = await staffToken(db, alfa.codeStaff, persona.id, persona.pin);
   const { mappa } = await piattiDelGiorno(db, token, 1);
   await ordina(db, token, 1, [mappa.A]);
   const csv = await call(db, 'GET', `/api/admin/report/delivery?week=${WEEK}&format=csv`, { token: admin });
@@ -501,30 +504,38 @@ test('i CSV non eseguono formule: un nome che inizia con = viene neutralizzato',
 });
 
 
-test('PIN personale: si sceglie al primo accesso, poi serve; il referente lo azzera', async () => {
-  const { db, alfa, rossi, mgrAlfa } = await scenario();
+test('PIN personale: lo assegna il referente, la persona lo usa e può cambiarlo', async () => {
+  const { db, alfa, mgrAlfa } = await scenario();
+  // Una persona nuova nasce già con un PIN, mostrato una volta al referente.
+  const nuova = (await call(db, 'POST', '/api/manager/employees', { token: mgrAlfa, body: { name: 'Valeria Fontana', locker: '44' } })).body;
+  assert.match(nuova.pin, /^\d{4}$/);
+  assert.ok(!(await db.first('SELECT pin_hash FROM employees WHERE id = ?', [nuova.id])).pin_hash.includes(nuova.pin), 'nel database sta l\'impronta');
+
   const login = (await call(db, 'POST', '/api/login', { body: { code: alfa.codeStaff } })).body.token;
-  const elenco = (await call(db, 'GET', '/api/staff/employees', { token: login })).body.employees;
-  assert.equal(elenco.find((e) => e.id === rossi.id).hasPin, false);
+  assert.equal((await call(db, 'POST', '/api/staff/identify', { token: login, body: { employeeId: nuova.id, pin: '0000' } })).status, 401);
+  assert.equal((await call(db, 'POST', '/api/staff/identify', { token: login, body: { employeeId: nuova.id, newPin: '9999' } })).status, 401, 'la persona non si sceglie il PIN da sola');
+  const dentro = await call(db, 'POST', '/api/staff/identify', { token: login, body: { employeeId: nuova.id, pin: nuova.pin } });
+  assert.equal(dentro.status, 200);
 
-  const senza = await call(db, 'POST', '/api/staff/identify', { token: login, body: { employeeId: rossi.id } });
-  assert.equal(senza.status, 400, 'senza PIN al primo accesso non si entra');
-  const corto = await call(db, 'POST', '/api/staff/identify', { token: login, body: { employeeId: rossi.id, newPin: '12' } });
-  assert.equal(corto.status, 400);
-  assert.equal((await call(db, 'POST', '/api/staff/identify', { token: login, body: { employeeId: rossi.id, newPin: '2468' } })).status, 200);
+  // La persona lo cambia con uno suo; il vecchio smette di valere.
+  assert.equal((await call(db, 'POST', '/api/staff/pin', { token: dentro.body.token, body: { current: 'x', next: '5555' } })).status, 401);
+  assert.equal((await call(db, 'POST', '/api/staff/pin', { token: dentro.body.token, body: { current: nuova.pin, next: '55' } })).status, 400);
+  assert.equal((await call(db, 'POST', '/api/staff/pin', { token: dentro.body.token, body: { current: nuova.pin, next: '5555' } })).status, 200);
+  assert.equal((await call(db, 'POST', '/api/staff/identify', { token: login, body: { employeeId: nuova.id, pin: nuova.pin } })).status, 401);
+  assert.equal((await call(db, 'POST', '/api/staff/identify', { token: login, body: { employeeId: nuova.id, pin: '5555' } })).status, 200);
 
-  const dopo = (await call(db, 'GET', '/api/staff/employees', { token: login })).body.employees;
-  assert.equal(dopo.find((e) => e.id === rossi.id).hasPin, true);
-  assert.equal((await call(db, 'POST', '/api/staff/identify', { token: login, body: { employeeId: rossi.id, pin: '0000' } })).status, 401);
-  assert.equal((await call(db, 'POST', '/api/staff/identify', { token: login, body: { employeeId: rossi.id, newPin: '9999' } })).status, 401, 'con il PIN impostato non si sovrascrive');
-  assert.equal((await call(db, 'POST', '/api/staff/identify', { token: login, body: { employeeId: rossi.id, pin: '2468' } })).status, 200);
-  assert.ok(!(await db.first('SELECT pin_hash FROM employees WHERE id = ?', [rossi.id])).pin_hash.includes('2468'), 'nel database sta l\'impronta');
+  // Troppi tentativi sbagliati: si ferma finché il referente non riassegna.
+  for (let i = 0; i < 8; i++) await call(db, 'POST', '/api/staff/identify', { token: login, body: { employeeId: nuova.id, pin: '1111' } });
+  assert.equal((await call(db, 'POST', '/api/staff/identify', { token: login, body: { employeeId: nuova.id, pin: '5555' } })).status, 429);
+  const riassegnato = await call(db, 'POST', `/api/manager/employees/${nuova.id}/pin`, { token: mgrAlfa, body: {} });
+  assert.equal(riassegnato.status, 200);
+  assert.equal((await call(db, 'POST', '/api/staff/identify', { token: login, body: { employeeId: nuova.id, pin: riassegnato.body.pin } })).status, 200, 'il PIN nuovo entra subito');
 
-  // Troppi tentativi sbagliati: si ferma, anche col PIN giusto, finché il referente non azzera.
-  for (let i = 0; i < 8; i++) await call(db, 'POST', '/api/staff/identify', { token: login, body: { employeeId: rossi.id, pin: '1111' } });
-  assert.equal((await call(db, 'POST', '/api/staff/identify', { token: login, body: { employeeId: rossi.id, pin: '2468' } })).status, 429);
-  assert.equal((await call(db, 'POST', `/api/manager/employees/${rossi.id}/pin/reset`, { token: mgrAlfa })).status, 200);
-  assert.equal((await call(db, 'POST', '/api/staff/identify', { token: login, body: { employeeId: rossi.id, newPin: '1357' } })).status, 200, 'dopo l\'azzeramento si sceglie un PIN nuovo');
+  // Il referente può anche scegliere il PIN, e l'importazione in blocco ne dà uno per persona.
+  assert.equal((await call(db, 'POST', `/api/manager/employees/${nuova.id}/pin`, { token: mgrAlfa, body: { pin: '12' } })).status, 400);
+  const blocco = (await call(db, 'POST', '/api/manager/employees/bulk', { token: mgrAlfa, body: { people: [{ name: 'Nino Bixio', locker: '80' }] } })).body;
+  assert.match(blocco.people[0].pin, /^\d{4}$/);
+  assert.equal(blocco.people[0].name, 'Nino Bixio');
 });
 
 test('stand-by per giorno: il pasto sparisce da cucina e consegne, anche a settimana chiusa', async () => {

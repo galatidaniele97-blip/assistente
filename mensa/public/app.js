@@ -293,28 +293,19 @@ async function viewLogin(message) {
  * chiunque possa ordinare a nome di un collega.
  */
 function pinDialog(employee) {
-  const campo = (placeholder, extra = {}) =>
-    h('input', { class: 'field code-input', type: 'password', inputmode: 'numeric', autocomplete: 'off', maxlength: '6', placeholder, ...extra });
-  const pin = campo(employee.hasPin ? 'PIN' : 'Scegli un PIN (4-6 cifre)');
-  const conferma = employee.hasPin ? null : campo('Ripeti il PIN');
+  if (!employee.hasPin) {
+    const box = dialog(`Ciao, ${employee.name.split(' ')[0]}`,
+      h('p', { text: 'Non hai ancora un PIN: chiedilo al referente della tua azienda, che te lo assegna con un tocco.' }),
+      [h('button', { class: 'btn btn-small btn-primary', text: 'Ok', onclick: () => box.close() })]);
+    return;
+  }
+  const pin = h('input', { class: 'field code-input', type: 'password', inputmode: 'numeric', autocomplete: 'off', maxlength: '6', placeholder: 'PIN' });
   const entra = h('button', { class: 'btn btn-small btn-primary', text: 'Entra' });
   const box = dialog(`Ciao, ${employee.name.split(' ')[0]}`,
-    [
-      h('p', { class: 'small muted', text: employee.hasPin
-        ? 'Inserisci il tuo PIN.'
-        : 'È il tuo primo accesso: scegli un PIN di 4-6 cifre. Ti servirà ogni volta che entri, e nessun altro potrà ordinare a nome tuo.' }),
-      pin,
-      conferma,
-      employee.hasPin ? h('p', { class: 'small muted', text: 'PIN dimenticato? Il referente della tua azienda può azzerarlo.' }) : null,
-    ],
+    [pin, h('p', { class: 'small muted', text: 'PIN dimenticato? Il referente della tua azienda te ne assegna uno nuovo.' })],
     [h('button', { class: 'btn btn-small', text: 'Annulla', onclick: () => box.close() }), entra]);
   const invia = () => guard(async () => {
-    if (!employee.hasPin && pin.value !== conferma.value) {
-      toast('I due PIN non coincidono.', true);
-      return;
-    }
-    const body = employee.hasPin ? { employeeId: employee.id, pin: pin.value } : { employeeId: employee.id, newPin: pin.value };
-    const result = await api('/api/staff/identify', { method: 'POST', body });
+    const result = await api('/api/staff/identify', { method: 'POST', body: { employeeId: employee.id, pin: pin.value } });
     box.close();
     store.token = result.token;
     localStorage.setItem(TOKEN_KEY, result.token);
@@ -323,8 +314,28 @@ function pinDialog(employee) {
     await viewStaffOrder();
   });
   entra.addEventListener('click', invia);
-  for (const campoPin of [pin, conferma]) campoPin?.addEventListener('keydown', (e) => { if (e.key === 'Enter') invia(); });
+  pin.addEventListener('keydown', (e) => { if (e.key === 'Enter') invia(); });
   pin.focus();
+}
+
+/** Il PIN assegnato dal referente è provvisorio: la persona lo cambia con uno suo. */
+function changePinDialog() {
+  const attuale = h('input', { class: 'field code-input', type: 'password', inputmode: 'numeric', maxlength: '6', placeholder: 'PIN attuale', autocomplete: 'off' });
+  const nuovo = h('input', { class: 'field code-input', type: 'password', inputmode: 'numeric', maxlength: '6', placeholder: 'Nuovo PIN (4-6 cifre)', autocomplete: 'off' });
+  const ripeti = h('input', { class: 'field code-input', type: 'password', inputmode: 'numeric', maxlength: '6', placeholder: 'Ripeti il nuovo PIN', autocomplete: 'off' });
+  const box = dialog('Cambia PIN', [attuale, nuovo, ripeti], [
+    h('button', { class: 'btn btn-small', text: 'Annulla', onclick: () => box.close() }),
+    h('button', {
+      class: 'btn btn-small btn-primary', text: 'Cambia',
+      onclick: () => guard(async () => {
+        if (nuovo.value !== ripeti.value) { toast('I due PIN nuovi non coincidono.', true); return; }
+        await api('/api/staff/pin', { method: 'POST', body: { current: attuale.value, next: nuovo.value } });
+        box.close();
+        toast('PIN cambiato');
+      }),
+    }),
+  ]);
+  attuale.focus();
 }
 
 async function viewStaffPick() {
@@ -346,7 +357,8 @@ async function viewStaffPick() {
         onclick: () => pinDialog(employee),
       },
         h('span', { class: 'locker-badge', text: employee.locker }),
-        h('span', { class: 'grow truncate', text: employee.name }))));
+        h('span', { class: 'grow truncate', text: employee.name }),
+        employee.hasPin ? null : h('span', { class: 'pill pill-todo', text: 'senza PIN' }))));
     if (!visible.length) names.replaceChildren(h('p', { class: 'muted', text: 'Nessun nominativo in questo gruppo.' }));
   };
 
@@ -536,6 +548,7 @@ async function viewStaffOrder() {
     days,
     h('div', { class: 'card', style: 'margin-top:16px' },
       h('p', { class: 'small muted', text: 'Puoi correggere quando vuoi: vale sempre l\u2019ultimo invio.' }),
+      h('button', { class: 'btn btn-small', style: 'margin-right:8px', text: 'Cambia PIN', onclick: changePinDialog }),
       h('button', {
         class: 'btn btn-small btn-danger',
         text: 'Cancella i miei ordini',
@@ -600,11 +613,16 @@ function employeeDialog(employee, onSaved) {
         text: 'Salva',
         onclick: () => guard(async () => {
           const body = { name: nome.value, locker: armadietto.value };
-          if (employee) await api(`/api/manager/employees/${employee.id}`, { method: 'PUT', body });
-          else await api('/api/manager/employees', { method: 'POST', body });
-          box.close();
-          toast('Elenco aggiornato');
-          await onSaved();
+          if (employee) {
+            await api(`/api/manager/employees/${employee.id}`, { method: 'PUT', body });
+            box.close();
+            toast('Elenco aggiornato');
+            await onSaved();
+          } else {
+            const creata = await api('/api/manager/employees', { method: 'POST', body });
+            box.close();
+            pinShownDialog(`${creata.name} inserita`, [{ name: creata.name, pin: creata.pin }], onSaved);
+          }
         }),
       }),
     ]);
@@ -621,7 +639,7 @@ async function managerPeople() {
       // min-width evita che il nome venga schiacciato dai pulsanti: piuttosto vanno a capo loro.
       h('span', { class: 'grow', style: 'min-width:9rem', text: employee.name }),
       employee.active ? null : h('span', { class: 'pill pill-skip', text: 'bloccata' }),
-      employee.active && !employee.hasPin ? h('span', { class: 'pill pill-todo', text: 'PIN da scegliere' }) : null,
+      employee.active && !employee.hasPin ? h('span', { class: 'pill pill-todo', text: 'senza PIN' }) : null,
       h('button', { class: 'btn btn-small', style: 'margin-left:auto', text: 'Modifica', onclick: () => employeeDialog(employee, managerPeople) }),
       h('button', {
         class: 'btn btn-small',
@@ -633,16 +651,7 @@ async function managerPeople() {
           await managerPeople();
         }),
       }),
-      employee.hasPin ? h('button', {
-        class: 'btn btn-small',
-        text: 'Azzera PIN',
-        onclick: () => guard(async () => {
-          if (!(await confirmBox(`Azzerare il PIN di ${employee.name}? Al prossimo accesso ne sceglierà uno nuovo.`, 'Azzera'))) return;
-          await api(`/api/manager/employees/${employee.id}/pin/reset`, { method: 'POST' });
-          toast('PIN azzerato');
-          await managerPeople();
-        }),
-      }) : null,
+      h('button', { class: 'btn btn-small', text: employee.hasPin ? 'Nuovo PIN' : 'Assegna PIN', onclick: () => assignPinDialog(employee, managerPeople) }),
       h('button', {
         class: 'btn btn-small btn-danger',
         text: 'Elimina',
@@ -664,6 +673,39 @@ async function managerPeople() {
       h('div', { class: 'row-wrap', style: 'margin-top:14px' },
         h('button', { class: 'btn btn-primary grow', text: '+ Aggiungi persona', onclick: () => employeeDialog(null, managerPeople) }),
         h('button', { class: 'btn', text: 'Incolla un elenco', onclick: () => bulkEmployeesDialog(managerPeople) }))));
+}
+
+/** Il PIN si vede qui e basta: il referente lo comunica alla persona. */
+function pinShownDialog(titolo, righe, onClose) {
+  const testo = righe.map((r) => `${r.name}: ${r.pin}`).join('\n');
+  const box = dialog(titolo,
+    [
+      h('p', { class: 'small muted', text: righe.length === 1 ? 'Comunicalo alla persona: non verrà mostrato di nuovo. Potrà cambiarlo dal suo ordine.' : 'Comunicali alle persone: non verranno mostrati di nuovo. Ognuno potrà cambiare il suo dal proprio ordine.' }),
+      h('div', { class: 'list' }, righe.map((r) => h('div', { class: 'list-item' }, h('span', { class: 'grow', text: r.name }), h('span', { class: 'code-chip', text: r.pin })))),
+    ],
+    [
+      righe.length > 1 ? h('button', { class: 'btn btn-small', text: 'Copia elenco', onclick: () => navigator.clipboard?.writeText(testo).then(() => toast('Elenco copiato')).catch(() => {}) }) : null,
+      h('button', { class: 'btn btn-small btn-primary', text: 'Fatto', onclick: () => box.close() }),
+    ]);
+  box.addEventListener('close', () => onClose?.());
+}
+
+/** Il referente assegna o riassegna il PIN: uno a caso, o quello che scrive lui. */
+function assignPinDialog(employee, onDone) {
+  const scelto = h('input', { class: 'field code-input', inputmode: 'numeric', maxlength: '6', placeholder: 'A caso', autocomplete: 'off' });
+  const box = dialog(`PIN per ${employee.name}`,
+    [h('p', { class: 'small muted', text: employee.hasPin ? 'Il PIN attuale smette di valere. Lascia vuoto per uno a caso.' : 'Lascia vuoto per uno a caso, oppure scrivi 4-6 cifre.' }), scelto],
+    [
+      h('button', { class: 'btn btn-small', text: 'Annulla', onclick: () => box.close() }),
+      h('button', {
+        class: 'btn btn-small btn-primary', text: 'Assegna',
+        onclick: () => guard(async () => {
+          const esito = await api(`/api/manager/employees/${employee.id}/pin`, { method: 'POST', body: { pin: scelto.value } });
+          box.close();
+          pinShownDialog('PIN assegnato', [{ name: employee.name, pin: esito.pin }], onDone);
+        }),
+      }),
+    ]);
 }
 
 /** Il link con il codice dell'azienda già dentro, da mandare nella chat di gruppo. */
@@ -720,7 +762,8 @@ function bulkEmployeesDialog(onDone) {
     if (esito.skipped.length) parti.push(`${esito.skipped.length} già presenti`);
     if (esito.conflicts.length) parti.push(`${esito.conflicts.length} con armadietto occupato: ${esito.conflicts.map((c) => `${c.name} (${c.locker} è di ${c.by})`).join(', ')}`);
     toast(parti.join(' · '), esito.conflicts.length > 0);
-    await onDone();
+    if (esito.people?.length) pinShownDialog(`PIN delle ${esito.people.length} persone inserite`, esito.people, onDone);
+    else await onDone();
   }));
   area.focus();
 }

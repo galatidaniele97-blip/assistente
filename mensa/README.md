@@ -54,10 +54,11 @@ non si segnala dopo.
 
 Il referente manda nella chat di gruppo un link con il codice dell'azienda già dentro
 (`…/?c=CODICE`, pulsante "Copia" nella scheda *Persone*). Chi lo apre sceglie il proprio nome dall'elenco
-e, **al primo accesso, sceglie un PIN** di 4-6 cifre; da lì in poi lo inserisce ogni volta. Così nessuno
-può ordinare a nome di un collega, e il nome continua a non digitarsi mai. PIN dimenticato o impostato
-da qualcun altro per sbaglio: il referente lo azzera con un tocco e la persona ne sceglie uno nuovo.
-Otto tentativi sbagliati bloccano quel PIN per un quarto d'ora; nel database sta solo l'impronta.
+e inserisce il **PIN che il referente gli ha assegnato**: ogni persona nasce con un PIN a caso, mostrato
+al referente una volta sola (anche per l'importazione in blocco, con l'elenco da copiare), e il referente
+può riassegnarlo in qualsiasi momento con "Nuovo PIN". La persona lo cambia poi dal proprio ordine con uno
+suo. Così nessuno ordina a nome di un collega, e il nome continua a non digitarsi mai. Otto tentativi
+sbagliati bloccano quel PIN per un quarto d'ora; nel database sta solo l'impronta.
 
 ## Stand-by, blocco, pasti extra
 
@@ -223,8 +224,8 @@ Le scelte alimentari possono rivelare dati sensibili (allergie, convinzioni reli
 - **PIN personale per dipendente** (PBKDF2, 8 tentativi ogni 15 minuti per persona): chi ha il codice
   dell'azienda vede l'elenco dei nomi ma non può ordinare a nome di un collega. Un PIN sbagliato non
   butta fuori dalla sessione: si riprova.
-- **Rischio residuo:** al primo accesso il PIN lo sceglie chi arriva prima. In un'azienda è evidente chi
-  è stato, e il referente lo azzera; se servisse più rigore, il PIN iniziale lo assegna il referente.
+- **Il PIN iniziale lo assegna il referente**, non chi arriva prima all'elenco: nessuno può prendersi
+  l'identità di un collega prima che questi entri.
 
 ## Scelte progettuali degne di nota
 

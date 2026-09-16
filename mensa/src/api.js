@@ -155,10 +155,15 @@ async function staffEmployees(request, env, db) {
 
 const PIN_RE = /^\d{4,6}$/;
 
+/** Un PIN di 4 cifre da comunicare a voce: lo genera il server, mai il client. */
+function generatePin() {
+  const n = crypto.getRandomValues(new Uint32Array(1))[0] % 10000;
+  return String(n).padStart(4, '0');
+}
+
 /**
  * Il nome si sceglie dall'elenco; il PIN personale dice che sei davvero tu.
- * Al primo accesso la persona lo sceglie; da lì in poi lo inserisce.
- * Se qualcun altro l'ha impostato prima di lei, il referente lo azzera.
+ * Lo assegna il referente e lo comunica alla persona, che poi può cambiarlo.
  */
 async function staffIdentify(request, env, db) {
   const session = await requireSession(request, env, ['staff'], db);
@@ -170,16 +175,11 @@ async function staffIdentify(request, env, db) {
   );
   if (!employee) throw bad('Nominativo non disponibile.');
 
-  if (!employee.pinHash) {
-    const newPin = String(body.newPin ?? '');
-    if (!PIN_RE.test(newPin)) throw bad('Scegli un PIN di 4-6 cifre: ti servirà ogni volta che entri.');
-    await db.run('UPDATE employees SET pin_hash = ? WHERE id = ?', [await hashCode(newPin), employee.id]);
-  } else {
-    await checkPinRate(db, employee.id);
-    if (!(await verifyCode(String(body.pin ?? ''), employee.pinHash))) {
-      await recordFailedPin(db, employee.id);
-      throw new HttpError(401, 'PIN errato.');
-    }
+  if (!employee.pinHash) throw new HttpError(403, 'Non hai ancora un PIN: chiedilo al referente della tua azienda.');
+  await checkPinRate(db, employee.id);
+  if (!(await verifyCode(String(body.pin ?? ''), employee.pinHash))) {
+    await recordFailedPin(db, employee.id);
+    throw new HttpError(401, 'PIN errato.');
   }
   return json({
     token: await issueToken(env.SESSION_SECRET, { r: 'staff', c: company.id, e: employee.id, v: session.v }),
@@ -300,6 +300,22 @@ async function staffOrder(request, env, db) {
   return json({ ok: true, updatedAt: order.updatedAt });
 }
 
+/** La persona cambia il PIN provvisorio del referente con uno suo. */
+async function staffChangePin(request, env, db) {
+  const { employee } = await requireEmployee(request, env, db);
+  const body = await readJson(request);
+  const row = await db.first('SELECT pin_hash AS pinHash FROM employees WHERE id = ?', [employee.id]);
+  await checkPinRate(db, employee.id);
+  if (!(await verifyCode(String(body.current ?? ''), row.pinHash))) {
+    await recordFailedPin(db, employee.id);
+    throw new HttpError(401, 'PIN attuale errato.');
+  }
+  const next = String(body.next ?? '');
+  if (!PIN_RE.test(next)) throw bad('Il nuovo PIN deve avere 4-6 cifre.');
+  await db.run('UPDATE employees SET pin_hash = ? WHERE id = ?', [await hashCode(next), employee.id]);
+  return json({ ok: true });
+}
+
 async function staffDeleteOrders(request, env, db) {
   const { employee } = await requireEmployee(request, env, db);
   const result = await db.run('DELETE FROM orders WHERE employee_id = ?', [employee.id]);
@@ -330,12 +346,15 @@ async function managerCreateEmployee(request, env, db) {
     [company.id, locker]
   );
   if (clash) throw bad(`L'armadietto ${locker} è già assegnato.`);
-  const result = await db.run('INSERT INTO employees (company_id, name, locker) VALUES (?, ?, ?)', [
+  const pin = generatePin();
+  const result = await db.run('INSERT INTO employees (company_id, name, locker, pin_hash) VALUES (?, ?, ?, ?)', [
     company.id,
     name,
     locker,
+    await hashCode(pin),
   ]);
-  return json({ id: result.lastId, name, locker, active: 1 }, 201);
+  // Il PIN si vede qui e basta: il referente lo comunica alla persona.
+  return json({ id: result.lastId, name, locker, active: 1, pin }, 201);
 }
 
 /**
@@ -370,24 +389,35 @@ async function managerBulkEmployees(request, env, db) {
     }
     names.add(name.toLowerCase());
     lockers.set(locker.toLowerCase(), name);
-    inserted.push(name);
+    const pin = generatePin();
+    inserted.push({ name, locker, pin });
     statements.push({
-      sql: 'INSERT INTO employees (company_id, name, locker) VALUES (?, ?, ?)',
-      params: [company.id, name, locker],
+      sql: 'INSERT INTO employees (company_id, name, locker, pin_hash) VALUES (?, ?, ?, ?)',
+      params: [company.id, name, locker, await hashCode(pin)],
     });
   }
   await db.batch(statements);
-  return json({ inserted: inserted.length, skipped, conflicts }, statements.length ? 201 : 200);
+  return json({ inserted: inserted.length, people: inserted, skipped, conflicts }, statements.length ? 201 : 200);
 }
 
-/** Il referente azzera il PIN: al prossimo accesso la persona ne sceglie uno nuovo. */
-async function managerResetPin(request, env, db, employeeId) {
+/**
+ * Il referente assegna (o riassegna) il PIN: uno a caso, oppure quello che
+ * indica lui. Lo vede una volta sola, per comunicarlo alla persona.
+ */
+async function managerAssignPin(request, env, db, employeeId) {
   const session = await requireSession(request, env, ['manager'], db);
   const company = await companyOf(db, session);
-  const result = await db.run('UPDATE employees SET pin_hash = NULL WHERE id = ? AND company_id = ?', [employeeId, company.id]);
-  if (!result.changes) throw new HttpError(404, 'Persona non trovata.');
+  const body = await readJson(request);
+  const employee = await db.first('SELECT id FROM employees WHERE id = ? AND company_id = ?', [employeeId, company.id]);
+  if (!employee) throw new HttpError(404, 'Persona non trovata.');
+  let pin = generatePin();
+  if (body.pin !== undefined && body.pin !== '') {
+    pin = String(body.pin);
+    if (!PIN_RE.test(pin)) throw bad('Il PIN deve avere 4-6 cifre.');
+  }
+  await db.run('UPDATE employees SET pin_hash = ? WHERE id = ?', [await hashCode(pin), employeeId]);
   await db.run('DELETE FROM login_attempts WHERE key = ?', [`pin|${employeeId}`]);
-  return json({ ok: true });
+  return json({ ok: true, pin });
 }
 
 /**
@@ -1179,6 +1209,7 @@ export async function handleApi(request, env, db) {
       if (method === 'GET' && b === 'week') return await staffWeek(request, env, db, url);
       if (method === 'POST' && b === 'order') return await staffOrder(request, env, db);
       if (method === 'DELETE' && b === 'orders') return await staffDeleteOrders(request, env, db);
+      if (method === 'POST' && b === 'pin') return await staffChangePin(request, env, db);
     }
 
     if (a === 'manager') {
@@ -1187,7 +1218,7 @@ export async function handleApi(request, env, db) {
       if (method === 'POST' && b === 'employees' && c === 'bulk') return await managerBulkEmployees(request, env, db);
       if (method === 'PUT' && b === 'employees' && c) return await managerUpdateEmployee(request, env, db, id(c));
       if (method === 'DELETE' && b === 'employees' && c) return await managerDeleteEmployee(request, env, db, id(c));
-      if (method === 'POST' && b === 'employees' && c && d === 'pin' && segments[4] === 'reset') return await managerResetPin(request, env, db, id(c));
+      if (method === 'POST' && b === 'employees' && c && d === 'pin') return await managerAssignPin(request, env, db, id(c));
       if (method === 'PUT' && b === 'suspensions') return await managerSuspend(request, env, db);
       if (method === 'GET' && b === 'menu') return await managerMenu(request, env, db, url);
       if (method === 'POST' && b === 'extras' && !c) return await managerAddExtra(request, env, db);
