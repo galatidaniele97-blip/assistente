@@ -120,6 +120,18 @@ npm test            # 32 test sulle regole di dominio
 
 Al primo avvio la pagina chiede nome del ristorante e codice di accesso: da lì si creano le aziende.
 
+## Dimostrazione senza installare niente
+
+`npm run demo` assembla in `demo/costruito/` una copia dell'app che gira **tutta nel browser**: SQLite
+compilato in WebAssembly (sql.js, con ripiego sulla versione in solo JavaScript dove la WebAssembly è
+bloccata), l'API vera sopra, e `fetch` dirottato verso di essa. Nessun server, nessun dato che esce dal
+telefono, e ricaricando la pagina si riparte da capo. Serve per far provare l'app a qualcuno mandandogli
+un link, non per usarla davvero: si può pubblicare su qualsiasi hosting statico.
+
+Dentro ci sono il menù reale della settimana, due aziende con regole diverse, sei persone, qualche
+ordine già inviato e una persona in stand-by da mercoledì. Un pannello elenca i codici dei cinque ruoli
+da provare.
+
 ## Messa in produzione (Cloudflare Workers + D1)
 
 Il costo di esercizio è praticamente nullo: per una ventina di aziende e qualche centinaio di persone
@@ -152,6 +164,7 @@ dev-server.js       entry point locale, stessa API
 public/             interfaccia (nessun framework, nessun passo di build)
 public/shared/      regole, scadenza, lettura del testo incollato, settimana ISO: condivisi tra server e client
 scripts/            recupero del codice del ristorante
+demo/               dimostrazione che gira nel browser (npm run demo)
 test/api.test.js    test end-to-end sull'API
 ```
 
