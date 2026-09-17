@@ -110,6 +110,126 @@ stessa istanza.
 | `mes.vw_PalletAllowedTransition` | Pulsanti da mostrare: transizioni ammesse dallo stato corrente |
 | `mes.vw_PalletStatusLog` | Storico transizioni leggibile (stato da/a, operatore, data, note) |
 
-## 3. Parser GS1-128, API e interfaccia tablet
+## 3. Applicazione (Node.js 22 + Express)
 
-In arrivo nelle fasi successive (vedi `docs/PIANO.md`, sezione 5).
+```powershell
+cd mes-pizzami
+npm install
+copy .env.example .env      # adattare la password se è stata cambiata
+npm start
+```
+
+Poi sul tablet aprire `http://<nome-server>:3000/`. In produzione conviene
+avviare Edge in modalità chiosco, così l'operatore non vede barra indirizzi né
+schede:
+
+```powershell
+msedge --kiosk "http://mes-server:3000/" --edge-kiosk-type=fullscreen --no-first-run
+```
+
+L'applicazione non richiede installazioni sul tablet: per aggiornarla si
+sostituiscono i file sul server.
+
+### Comandi
+
+| Comando | Effetto |
+|---------|---------|
+| `npm start` | Avvia il server (legge `.env` se presente) |
+| `npm run dev` | Come sopra, con riavvio automatico a ogni modifica |
+| `npm test` | 37 unit test del parser GS1 (test runner di Node, nessuna libreria) |
+
+### Struttura
+
+```
+src/
+  gs1/parser.js          parser GS1-128 puro: usato dal server E dal browser
+  server/
+    index.js             avvio Express, file statici, gestione errori
+    db.js                pool SQL Server, contesto tenant/stabilimento
+    routes/meta.js       operatori e stati
+    routes/products.js   anagrafica articoli
+    routes/pallets.js    scansione, dettaglio, registrazione, cambio stato
+  web/                   interfaccia tablet (HTML/CSS/JS, nessun build step)
+test/gs1.test.js         unit test del parser
+```
+
+### Parser GS1-128
+
+Un unico file (`src/gs1/parser.js`) usato dal server per la validazione
+autoritativa e servito al browser per il feedback immediato: non esiste una
+seconda implementazione che possa divergere.
+
+- Gestisce il prefisso di simbologia (`]C1`), il separatore FNC1/GS (ASCII 29)
+  dopo i campi a lunghezza variabile e l'Invio finale del lettore.
+- AI supportati: (00) SSCC, (01)/(02) GTIN, (10) lotto, (11) produzione,
+  (15) TMC, (17) scadenza, (37) colli, (310x) peso netto. Un AI non previsto
+  è un errore esplicito, mai un campo ignorato in silenzio.
+- Verifica il check digit modulo 10 di GTIN e SSCC, converte le date AAMMGG in
+  date reali (giorno `00` = fine mese, regola GS1 del secolo) e rifiuta mesi o
+  giorni inesistenti.
+- Accetta anche la notazione con parentesi `(00)…(10)…`, comoda per le prove da
+  tastiera dove non si può digitare il carattere ASCII 29. Nell'interfaccia il
+  separatore si inserisce a mano con `Ctrl+]`.
+
+### API
+
+| Metodo e percorso | Uso |
+|---|---|
+| `GET /api/meta` | Stabilimento, operatori, stati |
+| `GET /api/products` · `GET /api/products/by-gtin/:gtin` | Anagrafica articoli |
+| `GET /api/pallets?limit=` | Ultimi bancali movimentati |
+| `GET /api/pallets/:id` | Scheda: bancale, lotti, transizioni ammesse, storico |
+| `POST /api/scan` | Scompone il barcode, cerca il bancale, registra la scansione |
+| `POST /api/pallets/register` | Crea il bancale dal barcode (stato iniziale PRODOTTO) |
+| `POST /api/pallets/:id/transition` | Cambio di stato tramite la stored procedure |
+
+Ogni scansione finisce in `mes.ScanEvent`, anche quelle fallite: resta
+traccia di cosa è stato letto e perché è stato rifiutato. Nella registrazione
+il server **rianalizza il barcode**: non si fida dei campi inviati dal tablet.
+Gli errori delle stored procedure (`THROW 50xxx`) diventano codici HTTP
+(409 per una transizione non ammessa, 404 per un GTIN sconosciuto, e così via)
+e il messaggio in italiano arriva all'operatore.
+
+### Interfaccia tablet
+
+Una sola schermata. All'avvio si sceglie l'operatore da una lista di pulsanti
+grandi (demo senza password); la scelta resta per la sessione del browser.
+
+![Scheda bancale](docs/img/schermata-bancale.png)
+
+- Il campo di scansione è sempre a fuoco: torna a fuoco dopo ogni operazione e
+  dopo ogni tocco fuori dai campi di testo. In alto a destra un indicatore dice
+  se il lettore è pronto.
+- Esito immediato: banner verde (bancale trovato, stato aggiornato), giallo
+  (bancale nuovo, etichetta di collo) o rosso (barcode o operazione rifiutata),
+  con segnale acustico diverso per ciascun caso.
+- La scheda mostra SSCC, articolo, colli, lotti con TMC o scadenza, e lo
+  storico completo delle transizioni con operatore e note.
+- Compaiono **solo** i pulsanti delle transizioni ammesse dallo stato corrente,
+  letti da `mes.vw_PalletAllowedTransition`. Un bancale SPEDITO non mostra
+  alcun pulsante.
+- A ogni nuova scansione la scheda precedente sparisce subito: l'operatore non
+  può premere per sbaglio un pulsante del bancale letto prima.
+- Se l'SSCC non esiste, compare "Registra bancale" con i colli già compilati
+  dal campo (37) del barcode.
+
+![Registrazione di un bancale nuovo](docs/img/schermata-registrazione.png)
+
+Su errore, il dettaglio degli Application Identifier mostra cosa è stato letto
+e quale campo è stato rifiutato:
+
+![Barcode non valido](docs/img/schermata-errore.png)
+
+Il pulsante "Esempi" apre i barcode di prova di `docs/BARCODE_ESEMPIO.md`:
+serve per la demo senza avere un lettore a portata di mano.
+
+## 4. Stato della verifica
+
+- **Parser GS1**: 37 unit test, tutti superati (`npm test`).
+- **Interfaccia**: provata end-to-end con browser automatico contro un'API
+  simulata, 26 controlli superati (scansione con lettore, avanzamento di stato,
+  registrazione, errori, stato finale).
+- **Script SQL**: verificati con un analizzatore sintattico T-SQL e riletti,
+  ma **non ancora eseguiti su un'istanza reale**: l'ambiente di sviluppo usato
+  non poteva scaricare SQL Server. La prima esecuzione avviene con i comandi
+  della sezione 1.
