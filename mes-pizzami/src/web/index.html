@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MES Pizzami – Bancali</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-name">MES Pizzami</span>
+      <span class="brand-sub" id="plantName">Bancali prodotto finito</span>
+    </div>
+    <div class="topbar-right">
+      <span class="scanner-state" id="scannerState" title="Il campo di scansione è a fuoco">● Lettore pronto</span>
+      <button type="button" class="btn btn-ghost operator-btn" id="operatorBtn">Operatore: —</button>
+    </div>
+  </header>
+
+  <main class="main">
+    <section class="scan-box">
+      <label class="scan-label" for="scanInput">Scansiona il bancale</label>
+      <div class="scan-row">
+        <input id="scanInput" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+               placeholder="Inquadra il barcode GS1-128 oppure digita (00)…(01)…(10)… e premi Invio">
+        <button type="button" class="btn btn-primary" id="scanBtn">Leggi</button>
+        <button type="button" class="btn btn-ghost" id="examplesBtn">Esempi</button>
+      </div>
+      <div id="banner" class="banner hidden" role="status" aria-live="polite"></div>
+    </section>
+
+    <section id="resultArea"></section>
+
+    <section class="card recent-card">
+      <div class="card-head">
+        <h2>Ultimi bancali</h2>
+        <button type="button" class="btn btn-ghost btn-small" id="refreshRecentBtn">Aggiorna</button>
+      </div>
+      <div id="recentList" class="recent-list"></div>
+    </section>
+  </main>
+
+  <div id="operatorOverlay" class="overlay">
+    <div class="overlay-box">
+      <h2>Chi sta usando il tablet?</h2>
+      <p class="muted">Tocca il tuo nome. Verrà registrato su ogni operazione.</p>
+      <div id="operatorGrid" class="operator-grid"></div>
+    </div>
+  </div>
+
+  <div id="examplesOverlay" class="overlay hidden">
+    <div class="overlay-box wide">
+      <div class="card-head">
+        <h2>Barcode di prova</h2>
+        <button type="button" class="btn btn-ghost btn-small" id="examplesCloseBtn">Chiudi</button>
+      </div>
+      <p class="muted">Simulano la lettura del lettore. Tocca una riga per usarla.</p>
+      <div id="examplesList" class="examples-list"></div>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
